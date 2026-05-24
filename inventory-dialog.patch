@@ -1,0 +1,2685 @@
+From 6d2b128bacf7aa24c2135f426edee0f1df6a56a9 Mon Sep 17 00:00:00 2001
+From: "vyrapol.vutha" <vyrapol.vutha@wingbank.com.kh>
+Date: Sun, 24 May 2026 17:25:31 +0700
+Subject: [PATCH] fix: refactor inventory dialog
+
+---
+ src/modules/inventory/components/dialog.vue   | 1321 ++---------------
+ .../dialog/InventoryDialogDetailTab.vue       |  712 +++++++++
+ .../dialog/InventoryVariantSelector.vue       |   65 +
+ .../composables/useInventoryDialogForm.ts     |   54 +
+ .../useInventoryDialogSerialItems.ts          |  185 +++
+ .../composables/useInventoryDialogSubmit.ts   |  194 +++
+ 6 files changed, 1353 insertions(+), 1178 deletions(-)
+ create mode 100644 src/modules/inventory/components/dialog/InventoryDialogDetailTab.vue
+ create mode 100644 src/modules/inventory/components/dialog/InventoryVariantSelector.vue
+ create mode 100644 src/modules/inventory/components/dialog/composables/useInventoryDialogForm.ts
+ create mode 100644 src/modules/inventory/components/dialog/composables/useInventoryDialogSerialItems.ts
+ create mode 100644 src/modules/inventory/components/dialog/composables/useInventoryDialogSubmit.ts
+
+diff --git a/src/modules/inventory/components/dialog.vue b/src/modules/inventory/components/dialog.vue
+index bce20b162d..ec431aa995 100644
+--- a/src/modules/inventory/components/dialog.vue
++++ b/src/modules/inventory/components/dialog.vue
+@@ -38,720 +38,30 @@
+ 
+         <v-window v-model="activeTab">
+             <!-- Detail Section -->
+-            <v-window-item value="detail">
+-                <div class="pt-4">
+-                    <v-row
+-                        v-if="!['transfer', 'transfer_request'].includes(props.transaction_type)"
+-                        class="gutter px-4"
+-                        :class="variants.length > 0 ? 'pb-3' : ''"
+-                    >
+-                        <v-col v-if="external_reference && props.transaction_type === 'receipt'" cols="12" md="4">
+-                            <base-autocomplete
+-                                v-model:items="formData.issue_info"
+-                                v-model="formData.issue"
+-                                label="Issue"
+-                                item-title="reference_no"
+-                                item-value="id"
+-                                :error-messages="errorMessage?.issue || formErrors[store.indexItemInventory]?.issue"
+-                                :mode="store.formMode"
+-                                :api-service="apiLookupService.lookupIssueInTransit"
+-                                :payload="{
+-                                    transfer_request: external_reference,
+-                                }"
+-                                :table-headers="headers"
+-                                hide-details="auto"
+-                            >
+-                                <template #transaction_type="{ item }">
+-                                    <span>{{ capitalize(item.transaction_type) }}</span>
+-                                </template>
+-
+-                                <template #status="{ item }">
+-                                    <div class="d-flex">
+-                                        <base-status :status="item.status" />
+-                                    </div>
+-                                </template>
+-
+-                                <template #state="{ item }">
+-                                    <div class="d-flex">
+-                                        <base-status :status="item.state" />
+-                                    </div>
+-                                </template>
+-                            </base-autocomplete>
+-                        </v-col>
+-                        <v-col
+-                            cols="12"
+-                            :md="[external_reference && props.transaction_type === 'receipt' ? '8' : '12']"
+-                            style="padding-bottom: unset"
+-                        >
+-                            <base-autocomplete
+-                                v-if="!external_reference"
+-                                v-model="formData.item"
+-                                v-model:items="formData.item_info"
+-                                label="Inventory"
+-                                item-title="name"
+-                                item-value="id"
+-                                item-pre-title="reference_no"
+-                                class="required"
+-                                hide-details="auto"
+-                                :table-headers="INVENTORY_IMAGE_HEADERS"
+-                                :api-service="apiLookupService.item"
+-                                :error-messages="errorMessage?.item || formErrors[store.indexItemInventory]?.item"
+-                                :mode="store.formMode"
+-                                :params="{ item_class__type: 'equal,stock', status: INVENTORY_STATUS_FILTER }"
+-                                :payload="{
+-                                    transaction_type:
+-                                        props.transaction_type === 'transfer_request'
+-                                            ? 'transfer'
+-                                            : props.transaction_type,
+-                                }"
+-                                @update:items="onSelectItem"
+-                            >
+-                                <template #name="{ item }">
+-                                    <AppProfileCard
+-                                        :src="item?.file?.image_thumbnail_url ?? itemPlaceholder"
+-                                        :name="item?.reference_no"
+-                                        :headline="item?.name"
+-                                        headline-max-width="100%"
+-                                        headline-size="0.875rem"
+-                                        :error-src="itemPlaceholder"
+-                                        @image-click="onViewImage($event, item)"
+-                                    />
+-                                </template>
+-                                <template #is_active="{ item }">
+-                                    <BaseField :model-value="item.is_active" field-type="boolean" mode="view" />
+-                                </template>
+-                            </base-autocomplete>
+-                            <base-autocomplete
+-                                v-else-if="props.transaction_type === 'receipt'"
+-                                v-model="formData.item"
+-                                v-model:items="formData.item_info"
+-                                label="Inventory"
+-                                item-title="name"
+-                                item-value="id"
+-                                item-pre-title="reference_no"
+-                                class="required"
+-                                hide-details="auto"
+-                                :table-headers="INVENTORY_ITEM_IMAGE_HEADERS"
+-                                :api-service="apiLookupService.lookupInventoryFromIssue"
+-                                :error-messages="errorMessage?.item || formErrors[store.indexItemInventory]?.item"
+-                                :mode="store.formMode"
+-                                :payload="{
+-                                    transaction_id: [formData.issue],
+-                                    external_type,
+-                                    transaction_type: props.transaction_type,
+-                                }"
+-                                @update:items="onSelectItem"
+-                            >
+-                                <template #[`item.name`]="{ item }">
+-                                    <AppProfileCard
+-                                        :src="item?.item?.files[0]?.image_thumbnail_url ?? itemPlaceholder"
+-                                        :name="item?.item?.reference_no"
+-                                        :headline="item?.item?.name"
+-                                        headline-max-width="100%"
+-                                        headline-size="0.875rem"
+-                                        :error-src="itemPlaceholder"
+-                                        @image-click="onViewImage($event, item?.item)"
+-                                    />
+-                                </template>
+-                                <template #[`item.is_active`]="{ item }">
+-                                    <BaseField :model-value="item?.item?.is_active" field-type="boolean" mode="view" />
+-                                </template>
+-                            </base-autocomplete>
+-                            <base-autocomplete
+-                                v-else-if="props.transaction_type === 'issue'"
+-                                v-model="formData.item"
+-                                v-model:items="formData.item_info"
+-                                label="Inventory"
+-                                item-title="name"
+-                                item-value="id"
+-                                item-pre-title="reference_no"
+-                                class="required"
+-                                hide-details="auto"
+-                                :table-headers="INVENTORY_ITEM_IMAGE_HEADERS"
+-                                :api-service="apiLookupService.lookupInventoryFromTransferRequest"
+-                                :error-messages="errorMessage?.item || formErrors[store.indexItemInventory]?.item"
+-                                :mode="store.formMode"
+-                                :payload="{
+-                                    transaction_id: external_reference,
+-                                    transaction_type: props.transaction_type,
+-                                }"
+-                                @update:items="onSelectItem"
+-                            >
+-                                <template #[`item.name`]="{ item }">
+-                                    <AppProfileCard
+-                                        :src="item?.item?.files[0]?.image_thumbnail_url ?? itemPlaceholder"
+-                                        :name="item?.item?.reference_no"
+-                                        :headline="item?.item?.name"
+-                                        headline-max-width="100%"
+-                                        headline-size="0.875rem"
+-                                        :error-src="itemPlaceholder"
+-                                        @image-click="onViewImage($event, item?.item)"
+-                                    />
+-                                </template>
+-                                <template #[`item.is_active`]="{ item }">
+-                                    <BaseField :model-value="item?.item?.is_active" field-type="boolean" mode="view" />
+-                                </template>
+-                            </base-autocomplete>
+-                        </v-col>
+-                    </v-row>
+-                    <v-row
+-                        v-if="['transfer', 'transfer_request'].includes(props.transaction_type)"
+-                        class="gutter px-4"
+-                        :class="variants.length > 1 ? '' : 'mb-n6'"
+-                    >
+-                        <v-col cols="4" md="12">
+-                            <base-autocomplete
+-                                v-model="formData.item"
+-                                v-model:items="formData.item_info"
+-                                label="Inventory"
+-                                item-title="name"
+-                                item-value="id"
+-                                item-pre-title="reference_no"
+-                                field-type="auto_complete"
+-                                class="required"
+-                                hide-details="auto"
+-                                :table-headers="INVENTORY_IMAGE_HEADERS"
+-                                :api-service="apiLookupService.item"
+-                                :error-messages="errorMessage?.item"
+-                                :mode="store.formMode"
+-                                :params="{ item_class__type: 'equal,stock', status: INVENTORY_STATUS_FILTER }"
+-                                :payload="{
+-                                    transaction_type:
+-                                        props.transaction_type === 'transfer_request'
+-                                            ? 'transfer'
+-                                            : props.transaction_type,
+-                                }"
+-                                @update:items="onSelectItem"
+-                            >
+-                                <template #name="{ item }">
+-                                    <AppProfileCard
+-                                        :src="item?.file?.image_thumbnail_url ?? itemPlaceholder"
+-                                        :name="item?.reference_no"
+-                                        :headline="item?.name"
+-                                        headline-max-width="100%"
+-                                        headline-size="0.875rem"
+-                                        :error-src="itemPlaceholder"
+-                                        @image-click="onViewImage($event, item)"
+-                                    />
+-                                </template>
+-                                <template #is_active="{ item }">
+-                                    <BaseField :model-value="item.is_active" field-type="boolean" mode="view" />
+-                                </template>
+-                            </base-autocomplete>
+-                        </v-col>
+-                    </v-row>
+-
+-                    <!-- variant -->
+-                    <v-row v-if="variants.length > 1 || loadingVaraint" class="gutter px-6">
+-                        <div class="pa-4 mx-1 bg-contrast w-100 rounded-lg" style="max-height: 400px; overflow: auto">
+-                            <div class="d-flex align-center" style="position: sticky">
+-                                <v-icon icon="mdi-dots-grid" color="greenPrimary" class="pr-1"></v-icon>
+-                                <span>Select Variant</span>
+-                            </div>
+-                            <div v-if="loadingVaraint" class="d-flex justify-center">
+-                                <v-progress-circular indeterminate color="primary"></v-progress-circular>
+-                            </div>
+-
+-                            <div>
+-                                <div
+-                                    v-for="(items, inx) in variants"
+-                                    :key="inx"
+-                                    class="d-flex align-center my-4 bg-surface px-2 rounded-lg"
+-                                >
+-                                    <div v-tooltip-overflow class="pl-3" style="min-width: 17%; max-width: 17%">
+-                                        {{ items.attribute?.name }}
+-                                    </div>
+-                                    <v-divider vertical class="my-2 mr-6"></v-divider>
+-                                    <v-sheet class="d-flex align-content-space-around flex-wrap" min-height="30">
+-                                        <div v-for="(val, idx) in items?.values" :key="idx" class="align-center">
+-                                            <v-radio-group
+-                                                :key="idx"
+-                                                v-model="selectedVariants[inx]"
+-                                                inline
+-                                                class=""
+-                                                hide-details
+-                                                @update:model-value="onSelectedVariant(items, inx, idx)"
+-                                            >
+-                                                <v-radio
+-                                                    :label="val.name"
+-                                                    :value="val.id"
+-                                                    color="primary"
+-                                                    hide-details
+-                                                ></v-radio>
+-                                            </v-radio-group>
+-                                        </div>
+-                                    </v-sheet>
+-                                </div>
+-                            </div>
+-                        </div>
+-                    </v-row>
+-                    <v-row
+-                        v-if="!['transfer', 'transfer_request'].includes(props.transaction_type)"
+-                        class="gutter px-4"
+-                    >
+-                        <v-col cols="4" md="4">
+-                            <BaseAutocomplete
+-                                v-model="formData.warehouse"
+-                                label="Warehouse"
+-                                field-type="auto_complete"
+-                                class="required"
+-                                item-title="name"
+-                                item-value="id"
+-                                hide-details="auto"
+-                                :table-headers="warehouseHeaders"
+-                                :api-service="apiLookupService.warehouseLocation"
+-                                :params="{ is_active: true }"
+-                                :error-messages="errorMessage?.warehouse"
+-                                :disabled="isDisable"
+-                                :mode="store.formMode"
+-                                :trigger-on-focus="true"
+-                                @selected-item="selectWarehouse"
+-                            />
+-                        </v-col>
+-                        <v-col cols="4" md="4">
+-                            <BaseAutocomplete
+-                                v-model="formData.location"
+-                                label="Location"
+-                                field-type="auto_complete"
+-                                item-title="name"
+-                                item-value="id"
+-                                class="required"
+-                                hide-details="auto"
+-                                :table-headers="LOCATION_HEADERS"
+-                                :disabled="!formData.warehouse"
+-                                :api-service="apiLookupService.getLocation"
+-                                :params="{ warehouse_id: formData.warehouse?.id }"
+-                                :error-messages="
+-                                    errorMessage?.location || formErrors[store.indexItemInventory]?.location
+-                                "
+-                                :mode="store.formMode"
+-                                @selected-item="onSelectLocation"
+-                            />
+-                        </v-col>
+-                        <v-col cols="4" md="4">
+-                            <BaseAutocomplete
+-                                v-model="formData.item_uom"
+-                                field-type="auto_complete"
+-                                label="Item UOM"
+-                                hide-details="auto"
+-                                class="required"
+-                                item-title="uom_display_name"
+-                                item-value="id"
+-                                :table-headers="uomHeaders"
+-                                :api-service="apiLookupService.getItemUom"
+-                                :payload="{ item: formData.item }"
+-                                :disabled="!formData.item"
+-                                :error-messages="errorMessage?.item_uom"
+-                                :mode="store.formMode"
+-                                @selected-item="selectItemUom"
+-                            >
+-                            </BaseAutocomplete>
+-                        </v-col>
+-                    </v-row>
+-                    <!--                    transfer or transfer request section-->
+-                    <v-row v-else-if="props.transaction_type === 'transfer_request'" class="gutter px-4 pt-3">
+-                        <v-col cols="4" md="4" style="padding-top: unset !important">
+-                            <BaseAutocomplete
+-                                :model-value="fromWarehouse"
+-                                label="From Warehouse"
+-                                class="required"
+-                                item-title="name"
+-                                item-value="id"
+-                                item-pre-title="reference_no"
+-                                hide-details="auto"
+-                                :error-messages="errorMessage?.from_warehouse"
+-                                :mode="store.formMode"
+-                                disabled
+-                            />
+-                        </v-col>
+-
+-                        <v-col cols="4" md="4" style="padding-top: unset !important">
+-                            <base-field
+-                                v-model="formData.request_qty"
+-                                label="Request Quantity"
+-                                hide-details="auto"
+-                                field-type="currency"
+-                                :precision="4"
+-                                :error-messages="errorMessage?.request_qty"
+-                                :mode="store.formMode"
+-                            />
+-                        </v-col>
+-                        <v-col cols="4" md="4" style="padding-top: unset !important">
+-                            <BaseAutocomplete
+-                                v-model="formData.item_uom"
+-                                field-type="auto_complete"
+-                                label="Item UOM"
+-                                hide-details="auto"
+-                                class="required"
+-                                item-title="uom_display_name"
+-                                item-value="id"
+-                                :table-headers="uomHeaders"
+-                                :api-service="apiLookupService.getItemUom"
+-                                :payload="{ item: formData.item }"
+-                                :disabled="!formData.item"
+-                                :error-messages="errorMessage?.item_uom"
+-                                :mode="store.formMode"
+-                                @selected-item="selectItemUom"
+-                            />
+-                        </v-col>
+-                    </v-row>
+-
+-                    <v-row v-else-if="props.transaction_type === 'transfer'" class="gutter px-4">
+-                        <v-col cols="3">
+-                            <BaseAutocomplete
+-                                v-model="formData.item_uom"
+-                                field-type="auto_complete"
+-                                label="Item UOM"
+-                                hide-details="auto"
+-                                class="required"
+-                                item-title="uom_display_name"
+-                                item-value="id"
+-                                :table-headers="uomHeaders"
+-                                :api-service="apiLookupService.getItemUom"
+-                                :payload="{ item: formData.item }"
+-                                :disabled="!formData.item"
+-                                :error-messages="errorMessage?.item_uom"
+-                                :mode="store.formMode"
+-                                @selected-item="selectItemUom"
+-                            />
+-                        </v-col>
+-                        <v-col cols="3">
+-                            <base-field
+-                                v-model="formData.quantity"
+-                                label="Quantity"
+-                                hide-details="auto"
+-                                field-type="currency"
+-                                :precision="4"
+-                                :error-messages="errorMessage?.quantity"
+-                                :mode="store.formMode"
+-                                @update:model-value="isDirtyState = true"
+-                            />
+-                        </v-col>
+-                        <v-col cols="3">
+-                            <base-field
+-                                v-model="formData.cost"
+-                                readonly
+-                                label="Cost"
+-                                prepend-inner-icon="mdi-currency-usd"
+-                                :clearable="false"
+-                                hide-details="auto"
+-                                field-type="currency"
+-                                :precision="2"
+-                                :error-messages="errorMessage?.cost"
+-                                :mode="store.formMode"
+-                                :loading="loadingCost"
+-                            />
+-                        </v-col>
+-                        <v-col cols="3">
+-                            <base-field
+-                                v-model="formData.total_cost"
+-                                label="Total Cost"
+-                                field-type="currency"
+-                                :precision="2"
+-                                readonly
+-                                :clearable="false"
+-                                prepend-inner-icon="mdi-currency-usd"
+-                                :mode="store.formMode"
+-                                class="bg-surface"
+-                                hide-details="auto"
+-                                style="border-radius: 4px"
+-                            />
+-                        </v-col>
+-                    </v-row>
+-                    <div v-if="props.transaction_type != 'transfer'">
+-                        <div
+-                            v-if="
+-                                props.transaction_type != 'adjustment' && props.transaction_type != 'transfer_request'
+-                            "
+-                            class="pa-3"
+-                        >
+-                            <div class="pa-4 mx-1 bg-contrast rounded-lg">
+-                                <div class="d-flex align-center mb-4" style="position: sticky">
+-                                    <v-icon icon="mdi-package" color="greenPrimary" class="pr-1"></v-icon>
+-                                    <span>Stock</span>
+-                                </div>
+-                                <v-row class="gutter">
+-                                    <v-col cols="4" md="4">
+-                                        <base-field
+-                                            v-model="formData.quantity"
+-                                            class="required"
+-                                            label="Quantity"
+-                                            field-type="currency"
+-                                            :precision="4"
+-                                            :error-messages="
+-                                                errorMessage?.quantity || formErrors[store.indexItemInventory]?.quantity
+-                                            "
+-                                            :mode="store.formMode"
+-                                            hide-details="auto"
+-                                            @update:model-value="isDirtyState = true"
+-                                        />
+-                                    </v-col>
+-
+-                                    <v-col cols="4" md="4">
+-                                        <base-field
+-                                            v-model="formData.cost"
+-                                            class="required"
+-                                            label="Cost"
+-                                            prepend-inner-icon="mdi-currency-usd"
+-                                            field-type="currency"
+-                                            :precision="2"
+-                                            :error-messages="errorMessage?.cost"
+-                                            :mode="store.formMode"
+-                                            :loading="loadingCost"
+-                                            :readonly="isGetCostByLookup"
+-                                            :clearable="false"
+-                                            hide-details="auto"
+-                                            @update:model-value="isDirtyState = true"
+-                                        />
+-                                    </v-col>
+-
+-                                    <v-col cols="4" md="4">
+-                                        <base-field
+-                                            v-model="formData.total_cost"
+-                                            label="Total Cost"
+-                                            field-type="currency"
+-                                            :precision="2"
+-                                            readonly
+-                                            :clearable="false"
+-                                            prepend-inner-icon="mdi-currency-usd"
+-                                            :mode="store.formMode"
+-                                            hide-details="auto"
+-                                        />
+-                                    </v-col>
+-                                </v-row>
+-                            </div>
+-                        </div>
+-
+-                        <div v-if="props.transaction_type == 'issue'" class="px-3 pb-3">
+-                            <div class="pa-4 mx-1 bg-contrast rounded-lg">
+-                                <div class="d-flex align-center mb-4" style="position: sticky">
+-                                    <v-icon icon="mdi-currency-usd" color="greenPrimary" class="pr-1"></v-icon>
+-                                    <span>Price</span>
+-                                </div>
+-                                <v-row class="gutter">
+-                                    <v-col cols="4" md="4">
+-                                        <base-field
+-                                            v-model="formData.quantity"
+-                                            class="required"
+-                                            label="Quantity"
+-                                            readonly
+-                                            :clearable="false"
+-                                            :error-messages="errorMessage?.quantity"
+-                                            :mode="store.formMode"
+-                                            hide-details="auto"
+-                                            field-type="currency"
+-                                            :precision="4"
+-                                        />
+-                                    </v-col>
+-
+-                                    <v-col cols="4" md="4">
+-                                        <base-field
+-                                            v-model="formData.price"
+-                                            class="required"
+-                                            label="Price"
+-                                            prepend-inner-icon="mdi-currency-usd"
+-                                            :error-messages="errorMessage?.price"
+-                                            :mode="store.formMode"
+-                                            hide-details="auto"
+-                                            field-type="currency"
+-                                            :precision="2"
+-                                        />
+-                                    </v-col>
+-
+-                                    <v-col cols="4" md="4">
+-                                        <base-field
+-                                            v-model="calTotalAmount"
+-                                            label="Total Amount"
+-                                            readonly
+-                                            :clearable="false"
+-                                            prepend-inner-icon="mdi-currency-usd"
+-                                            :mode="store.formMode"
+-                                            hide-details="auto"
+-                                            field-type="currency"
+-                                            :precision="2"
+-                                        />
+-                                    </v-col>
+-                                </v-row>
+-                            </div>
+-                        </div>
+-
+-                        <div v-if="props.transaction_type == 'adjustment'" class="pa-3">
+-                            <div class="pa-4 mx-1 bg-contrast rounded-lg">
+-                                <div class="d-flex align-center mb-4" style="position: sticky">
+-                                    <v-icon icon="mdi-package" color="greenPrimary" class="pr-1"></v-icon>
+-                                    <span>Stock</span>
+-                                </div>
+-                                <v-row class="gutter">
+-                                    <v-col cols="3" md="3">
+-                                        <base-field
+-                                            v-model="formData.adjust_type"
+-                                            class="required"
+-                                            label="Adjust Type"
+-                                            hide-details="auto"
+-                                            field-type="select"
+-                                            :items="ADJUST_TYPES"
+-                                            item-title="text"
+-                                            item-value="value"
+-                                            :error-messages="errorMessage?.adjust_type"
+-                                            :clearable="false"
+-                                            :mode="store.formMode"
+-                                            @update:model-value="onSelectAdjustType"
+-                                        />
+-                                    </v-col>
+-
+-                                    <v-col cols="3" md="3">
+-                                        <base-field
+-                                            v-model="formData.adjust_qty"
+-                                            class="required"
+-                                            label="Quantity"
+-                                            hide-details="auto"
+-                                            field-type="currency"
+-                                            :precision="4"
+-                                            :error-messages="errorMessage?.adjust_qty"
+-                                            :mode="store.formMode"
+-                                        />
+-                                    </v-col>
+-                                    <v-col cols="3" md="3">
+-                                        <base-field
+-                                            v-model="formData.adjust_cost"
+-                                            class="required"
+-                                            label="Total Cost"
+-                                            hide-details="auto"
+-                                            field-type="currency"
+-                                            :precision="2"
+-                                            :error-messages="errorMessage?.adjust_cost"
+-                                            :mode="store.formMode"
+-                                        />
+-                                    </v-col>
+-                                    <v-col cols="3" md="3">
+-                                        <BaseAutocomplete
+-                                            v-model="formData.fifo_transaction"
+-                                            v-model:items="formData.fifo_transaction_info"
+-                                            class="required"
+-                                            label="Fifo Transaction"
+-                                            hide-details="auto"
+-                                            item-title="movement.reference_no"
+-                                            item-pre-title="item.reference_no"
+-                                            item-value="id"
+-                                            :error-messages="errorMessage?.fifo_transaction"
+-                                            :api-service="apiLookupService.getFifoTransaction"
+-                                            :payload="{
+-                                                item_id: formData.item,
+-                                                location_id: formData.location?.id,
+-                                            }"
+-                                            :disabled="!isFifo"
+-                                            :mode="store.formMode"
+-                                            :trigger-on-focus="true"
+-                                            :table-headers="FIFO_TRANSACTION_HEADERS"
+-                                        ></BaseAutocomplete>
+-                                    </v-col>
+-                                </v-row>
+-                            </div>
+-                        </div>
+-                    </div>
+-                    <div v-else>
+-                        <div class="pa-3">
+-                            <div class="pa-4 mx-1 bg-contrast rounded-lg">
+-                                <div class="d-flex align-center mb-4" style="position: sticky">
+-                                    <v-icon icon="mdi-dots-grid" color="greenPrimary" class="pr-1"></v-icon>
+-                                    <span>Location</span>
+-                                </div>
+-                                <v-row class="gutter">
+-                                    <v-col cols="6" md="6">
+-                                        <BaseAutocomplete
+-                                            v-model="formData.from_warehouse"
+-                                            class="required"
+-                                            label="From Warehouse"
+-                                            item-title="name"
+-                                            item-value="id"
+-                                            item-pre-title="reference_no"
+-                                            hide-details="auto"
+-                                            :table-headers="warehouseHeaders"
+-                                            :api-service="apiLookupService.warehouseLocation"
+-                                            :params="{ is_active: true }"
+-                                            :error-messages="errorMessage?.from_warehouse"
+-                                            :mode="store.formMode"
+-                                            @selected-item="$target => transferWarehouse('from_warehouse', $target)"
+-                                        >
+-                                        </BaseAutocomplete>
+-                                    </v-col>
+-
+-                                    <v-col cols="6" md="6">
+-                                        <BaseAutocomplete
+-                                            v-model="formData.to_warehouse"
+-                                            label="To Warehouse"
+-                                            class="required"
+-                                            item-title="name"
+-                                            item-value="id"
+-                                            hide-details="auto"
+-                                            :table-headers="warehouseHeaders"
+-                                            :api-service="apiLookupService.warehouseLocation"
+-                                            :params="{ is_active: true }"
+-                                            :error-messages="errorMessage?.to_warehouse"
+-                                            :mode="store.formMode"
+-                                            @selected-item="$target => transferWarehouse('to_warehouse', $target)"
+-                                        />
+-                                    </v-col>
+-                                    <v-col cols="6" md="6">
+-                                        <BaseAutocomplete
+-                                            v-model="formData.from_location"
+-                                            class="required"
+-                                            label="From Location"
+-                                            item-title="name"
+-                                            item-value="id"
+-                                            hide-details="auto"
+-                                            :table-headers="LOCATION_HEADERS"
+-                                            :disabled="!formData.from_warehouse"
+-                                            :api-service="apiLookupService.getLocation"
+-                                            :params="{ warehouse_id: formData.from_warehouse?.id }"
+-                                            return-object
+-                                            :error-messages="errorMessage?.from_location"
+-                                            :mode="store.formMode"
+-                                            @selected-item="onUpdateFromLocation"
+-                                        >
+-                                        </BaseAutocomplete>
+-                                    </v-col>
+-
+-                                    <v-col cols="6" md="6">
+-                                        <BaseAutocomplete
+-                                            v-model="formData.to_location"
+-                                            label="To Location"
+-                                            class="required"
+-                                            field-type="auto_complete"
+-                                            item-title="name"
+-                                            item-value="id"
+-                                            hide-details="auto"
+-                                            :table-headers="LOCATION_HEADERS"
+-                                            :disabled="!formData.to_warehouse"
+-                                            :api-service="apiLookupService.getLocation"
+-                                            :params="{ warehouse_id: formData.to_warehouse?.id }"
+-                                            :error-messages="errorMessage?.to_location"
+-                                            :mode="store.formMode"
+-                                            @selected-item="formData.to_location = $event"
+-                                        />
+-                                    </v-col>
+-                                </v-row>
+-                            </div>
+-                        </div>
+-                    </div>
+-
+-                    <v-row class="gutter px-4">
+-                        <v-col cols="12" md="12">
+-                            <base-field
+-                                v-model="formData.description"
+-                                class=""
+-                                label="Remark"
+-                                field-type="textarea"
+-                                hide-details="auto"
+-                                :mode="store.formMode"
+-                                row-height="15"
+-                                rows="3"
+-                            />
+-                        </v-col>
+-                    </v-row>
+-                </div>
+-            </v-window-item>
+-
++            <InventoryDialogDetailTab
++                v-bind="props"
++                v-model:selected-variants="selectedVariants"
++                :form-data="formData"
++                :store="store"
++                :api-lookup-service="apiLookupService"
++                :error-message="errorMessage"
++                :variants="variants"
++                :loading-varaint="loadingVaraint"
++                :loading-cost="loadingCost"
++                :is-get-cost-by-lookup="isGetCostByLookup"
++                :cal-total-amount="calTotalAmount"
++                :is-fifo="isFifo"
++                :on-select-item="onSelectItem"
++                :on-view-image="onViewImage"
++                :select-warehouse="selectWarehouse"
++                :on-select-location="onSelectLocation"
++                :select-item-uom="selectItemUom"
++                :on-select-adjust-type="onSelectAdjustType"
++                :transfer-warehouse="transferWarehouse"
++                :on-update-from-location="onUpdateFromLocation"
++                @select-variant="onSelectedVariant"
++                @dirty="isDirtyState = true"
++            />
+             <!-- Serial Item -->
+             <v-window-item value="serial_item">
+                 <Serial
+@@ -766,39 +76,29 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { ref, computed, watchEffect } from 'vue'
++    import { ref, computed, watch } from 'vue'
+     import { useInventoryTransaction } from '@@/inventory/store/transaction.store'
+     import { lookupServices } from '@@/inventory/services/baseLookUp.service.ts'
+     import { ItemSerial } from '@@/app/services/serial'
+-    import { fileServices } from '@/atom/base/base.apis'
+-    import { headers, INVENTORY_ITEM_IMAGE_HEADERS } from '@@/inventory/data/receipt/constants'
+-    import { capitalize } from '@/utils/str'
+     import { len } from '@/utils/core'
+     import Serial from '@@/components/serial/Serial.vue'
++    import InventoryDialogDetailTab from '@@/inventory/components/dialog/InventoryDialogDetailTab.vue'
+     import { useSerialStore } from '@@/store/serial'
+     import object from '@/utils/object'
+-    import {
+-        ADJUST_TYPES,
+-        INVENTORY_IMAGE_HEADERS,
+-        INVENTORY_STATUS_FILTER,
+-        LOCATION_HEADERS,
+-        uomHeaders,
+-        warehouseHeaders,
+-    } from '@@/inventory/data'
+-    import { FIFO_TRANSACTION_HEADERS } from '@@/inventory/data/adjustment'
+-    import AppProfileCard from '@/components/app/AppProfileCard.vue'
+     import { API_BASE_URL } from '@/utils/api-base-url'
+     import { useViewImage } from '@/composables/useViewImage'
+-    import itemPlaceholder from '@/assets/images/item-placeholder.png'
+-    import { DataUpload } from '@@/composables/useSerial'
+-    import uniqBy from 'lodash/uniqBy'
+     import { useI18n } from 'vue-i18n'
++    import {
++        buildInventoryDialogFormData,
++        resolveInventoryDialogAction,
++    } from '@@/inventory/components/dialog/composables/useInventoryDialogForm'
++    import { useInventoryDialogSerialItems } from '@@/inventory/components/dialog/composables/useInventoryDialogSerialItems'
++    import { useInventoryDialogSubmit } from '@@/inventory/components/dialog/composables/useInventoryDialogSubmit'
+ 
+     const store = useInventoryTransaction()
+     const apiLookupService = new lookupServices()
+     const itemSerial = new ItemSerial()
+     const emit = defineEmits(['onSave'])
+-    const saveLoading = ref(false)
+ 
+     const activeTab = ref('detail')
+     // const isVariant = ref(false)
+@@ -852,8 +152,9 @@
+     })
+ 
+     const serialStore = useSerialStore()
+-    const { isSelectAll, selectedSerial, isSelectedSerial, dataUpload, isWrongTemplate, errorSerial } =
+-        storeToRefs(serialStore)
++    const serialRefs = storeToRefs(serialStore)
++    const { isSelectAll, selectedSerial, isSelectedSerial, dataUpload, isWrongTemplate, errorSerial } = serialRefs
++    const hasCardNumber = inject('card-number', false)
+ 
+     const loadingVaraint = ref(false)
+     const title = computed(() => {
+@@ -938,6 +239,14 @@
+ 
+     const isDirtyState = ref(false)
+     const localAvailableQty = ref(null)
++    const loadFormDataFromItem = item => {
++        if (!item) return
++
++        formData.value = buildInventoryDialogFormData(item, resolveInventoryDialogAction(item, props.parentFormMode))
++        localAvailableQty.value = item?.available_qty_uom
++        isFifo.value = !object.isEmpty(item?.fifo_transaction_info)
++    }
++
+     const emptyFormdata = () => {
+         formData.value.id = undefined
+         formData.value.warehouse = props.warehouse_info
+@@ -990,186 +299,30 @@
+         return (formData.value.totalAmount = parseFloat(formData.value.quantity * formData.value.price).toFixed(2))
+     })
+ 
+-    const errorMessage = ref({})
+-
+-    // for validate item inventory before create a transaction
+-    const validateForm = () => {
+-        const { transaction_type } = props
+-
+-        const commonFields = {
+-            id: formData.value?.id || undefined,
+-            warehouse: formData.value.warehouse?.id,
+-            location: formData.value.location?.id,
+-            item: formData.value.item,
+-            item_uom: formData.value.item_uom?.id,
+-            serial_file: formData.value.serial_file,
+-            description: formData.value.description,
+-            action: formData.value.id ? 'update' : 'create',
+-            external_reference: props?.external_reference,
+-            external_type: props.external_type ?? props.transaction_type,
+-            total_cost: formData.value.total_cost ?? 0,
+-            txn_dtl_object_id: formData.value?.txn_dtl_object_id,
+-            txn_dtl_content_type: formData.value?.txn_dtl_content_type,
+-            unit_cost_base_uom: formData.value?.unit_cost_base_uom,
+-            unit_cost_uom: formData.value?.unit_cost_uom,
+-        }
+-
+-        switch (transaction_type) {
+-            case 'receipt':
+-                return {
+-                    ...commonFields,
+-                    quantity: formData.value.quantity,
+-                    cost: formData.value.cost,
+-                }
+-            case 'issue':
+-                return {
+-                    ...commonFields,
+-                    quantity: formData.value.quantity,
+-                    cost: formData.value.cost,
+-                    price: formData.value.price,
+-                    card_number_file: formData.value.card_number_file,
+-                    available_qty_uom: formData.value.available_qty_uom,
+-                    allow_negative: formData.value.allow_negative,
+-                }
+-            case 'transfer':
+-                return {
+-                    ...commonFields,
+-                    quantity: formData.value.quantity,
+-                    cost: formData.value.cost,
+-                    from_warehouse: formData.value.from_warehouse?.id,
+-                    from_location: formData.value.from_location?.id,
+-                    to_warehouse: formData.value.to_warehouse?.id,
+-                    to_location: formData.value.to_location?.id,
+-                    issue: formData.value.issue,
+-                }
+-            case 'transfer_request':
+-                return {
+-                    ...commonFields,
+-                    request_qty: formData.value.request_qty,
+-                    from_warehouse: props.fromWarehouse?.id,
+-                    to_warehouse: props.toWarehouse?.id,
+-                }
+-            case 'adjustment':
+-                return {
+-                    ...commonFields,
+-                    adjust_type: formData.value.adjust_type,
+-                    adjust_qty: formData.value.adjust_qty,
+-                    adjust_cost: formData.value.adjust_cost,
+-                    fifo_transaction: formData.value.fifo_transaction ?? undefined,
+-                }
+-            default:
+-                return {}
+-        }
+-    }
+-
+-    const $confirmSaveQtyDialogRef = ref()
+     const { t } = useI18n()
+-    const onConfirmQuantity = async (): Promise<void> => {
+-        // ask for confirmation if type issue and quantity input more than available
+-        // non serial item = allow negative bcuz both negative and serial cannot be true at the same time
+-        if (formData.value.quantity && localAvailableQty.value) {
+-            if (props.transaction_type === 'issue' && formData.value.quantity > localAvailableQty.value) {
+-                const isConfirm = await $confirmSaveQtyDialogRef.value?.open(
+-                    'Confirm Save Item',
+-                    t(
+-                        formData.value.allow_negative
+-                            ? 'inventory.confirm_over_quantity'
+-                            : 'inventory.confirm_quantity',
+-                        { count: localAvailableQty.value }
+-                    )
+-                )
+-
+-                if (!isConfirm) return
+-                if (!formData.value.allow_negative) formData.value.quantity = localAvailableQty.value
+-            }
+-        }
+-        await onSave()
+-    }
+-    const onSave = async () => {
+-        try {
+-            saveLoading.value = true
+-            activeTab.value = 'detail'
+-            if (isItemHasSerial.value && props.transaction_type != 'transfer_request') {
+-                // Create a FormData object
+-                let formFile = new FormData()
+-
+-                // Append the data to the FormData object
+-                if (len(selectedSerial.value)) {
+-                    // upload serial
+-                    const serials =
+-                        typeof selectedSerial.value[0] === 'string'
+-                            ? selectedSerial.value
+-                            : selectedSerial.value.map(s => s.serial)
+-                    formFile.append(
+-                        'file',
+-                        new File([JSON.stringify(serials)], 'item_serial.json', { type: 'application/json' })
+-                    )
+-                    formFile.append('ref_type', 'inventory')
+-                    formFile.append('hr_employee', props.employee)
+-
+-                    // Call the fileServices.create method and await the response
+-                    const res = await fileServices.create(formFile)
+-
+-                    // Update the formData.value.serial_file property with the response ID
+-                    formData.value.serial_file = res.data[0].id
+-
+-                    if (hasCardNumber.value) {
+-                        formFile = new FormData()
+-                        // upload card number with serial as an array of object
+-                        const cardNumbers = [...selectedSerial.value]
+-                        formFile.append(
+-                            'file',
+-                            new File([JSON.stringify(cardNumbers)], 'item_serial_cards.json', {
+-                                type: 'application/json',
+-                            })
+-                        )
+-                        formFile.append('ref_type', 'inventory')
+-                        formFile.append('hr_employee', props.employee)
+-
+-                        // Call the fileServices.create method and await the response
+-                        const res = await fileServices.create(formFile)
+-
+-                        // Update the formData.value.serial_file property with the response ID
+-                        formData.value.card_number_file = res.data[0].id
+-                    }
+-                }
+-            }
+-
+-            await itemSerial
+-                .validateForm(props.transaction_type, validateForm())
+-                .then(res => {
+-                    // Close the dialog
+-
+-                    isWrongTemplate.value = false
+-                    errorSerial.value = ''
+-                    store.isOpenDialog = false
+-                    // Emit the 'onSave' event with the transaction type and formData.value
+-                    emit('onSave', props.transaction_type, formData.value)
+-                    emptyFormdata()
+-                    errorMessage.value = {}
+-                    activeTab.value = 'detail'
+-                })
+-                .catch(error => {
+-                    errorMessage.value = error?.response?.data?.error?.form_errors
+-                })
+-            if (
+-                (isSelectedSerial.value && !len(selectedSerial.value)) ||
+-                (isItemHasSerial.value && !len(dataUpload.value))
+-            ) {
+-                if (props.transaction_type !== 'transfer_request') {
+-                    isWrongTemplate.value = true
+-                    errorSerial.value = "Item serial can't be empty."
+-                    activeTab.value = 'serial_item'
+-                }
+-            }
+-            // selectedSerial.value = false
+-            // Close the dialog
+-        } catch (error) {
+-            saveLoading.value = false
+-        } finally {
+-            saveLoading.value = false
+-        }
+-    }
++    const {
++        saveLoading,
++        errorMessage,
++        confirmSaveQtyDialogRef: $confirmSaveQtyDialogRef,
++        onConfirmQuantity,
++    } = useInventoryDialogSubmit({
++        formData,
++        props,
++        store,
++        emit,
++        itemSerial,
++        activeTab,
++        isItemHasSerial,
++        selectedSerial,
++        isSelectedSerial,
++        dataUpload,
++        isWrongTemplate,
++        errorSerial,
++        hasCardNumber,
++        localAvailableQty,
++        emptyFormdata,
++        t,
++    })
+ 
+     const variants = ref([])
+     const isFifo = ref(false)
+@@ -1196,88 +349,28 @@
+             formData.value.item_info = {}
+         }
+     }
+-    const isLoadingSerialItem = ref(false)
+-
+-    // keep for get item serial
+-    const hasCardNumber = inject('card-number', false)
+-
+-    const getSerial = async () => {
+-        try {
+-            isLoadingSerialItem.value = true
+-            let currentPage = 1
+-            const pageSize = 1000
+-            let hasMoreData = true
+-            const serialsSet = hasCardNumber.value ? new Map<string, DataUpload>() : new Set<string>()
+-
+-            if (hasCardNumber.value) {
+-                dataUpload.value.forEach((item: DataUpload) => {
+-                    serialsSet.set(item.serial, item)
+-                })
+-            } else {
+-                dataUpload.value.forEach((serial: string) => {
+-                    serialsSet.add(serial)
+-                })
+-            }
+-
+-            while (hasMoreData) {
+-                const response = await apiLookupService.getItemSerial(
+-                    {
+-                        item: formData.value.item,
+-                        paging: true,
+-                        issue_detail_id:
+-                            formData.value.txn_dtl_object_id && props.transaction_type === 'receipt'
+-                                ? formData.value.txn_dtl_object_id
+-                                : undefined,
+-                        location: formData.value.from_location?.id ?? formData.value.location?.id ?? undefined,
+-                    },
+-                    {
+-                        page: currentPage,
+-                        page_size: pageSize,
+-                    }
+-                )
+-
+-                if (hasCardNumber.value) {
+-                    response.data.results.forEach(item => {
+-                        serialsSet.set(item.serial, new DataUpload({ serial: item.serial }))
+-                    })
+-                } else {
+-                    response.data.results.forEach(item => {
+-                        serialsSet.add(item.serial)
+-                    })
+-                }
+-
+-                if (currentPage % 3 === 0) {
+-                    await nextTick()
+-                }
+-
+-                hasMoreData = response.data.next !== null
+-                currentPage++
+-            }
+-
+-            dataUpload.value = hasCardNumber.value ? Array.from(serialsSet.values()) : Array.from(serialsSet)
+-
+-            if (dataUpload.value.length > 0) {
+-                isSelectedSerial.value = true
+-                formData.value.selectedSerial = true
+-            }
+-        } catch (error) {
+-            console.error(error)
+-        } finally {
+-            isLoadingSerialItem.value = false
+-        }
+-    }
+-
+-    const fetchItemSerial = async () => {
+-        if (
+-            object.isEmpty(formData.value.txn_dtl_object_id) &&
+-            object.isEmpty(formData.value.from_location) &&
+-            object.isEmpty(formData.value.location) &&
+-            store.formMode == 'view'
+-        )
+-            return
+-        dataUpload.value = []
+-        await getSerial()
+-    }
++    const {
++        isLoadingSerialItem,
++        fetchItemSerial,
++        getItemSerial,
++        getItemSerialFromIssue,
++        getItemSerialAndCardNumber,
++        doFetchSerial,
++    } = useInventoryDialogSerialItems({
++        formData,
++        props,
++        store,
++        apiLookupService,
++        itemSerial,
++        serialStore,
++        serialRefs,
++        hasCardNumber,
++        isItemHasSerial,
++        valueProvider,
++        resetSelectedVariants: () => {
++            selectedVariants.value = {}
++        },
++    })
+ 
+     const onSelectItem = async value => {
+         isDirtyState.value = true
+@@ -1395,129 +488,26 @@
+             localAvailableQty.value = formData.value.available_qty_uom
+         }
+     }
+-    const getItemSerial = async id => {
+-        if (dataUpload.value.length !== 0) return
+-        isLoadingSerialItem.value = true
+-        try {
+-            const res = await itemSerial.getItemSerialById(id, {})
+-            let data = res.data
+-            if (hasCardNumber.value) {
+-                data = res.data.map(item => new DataUpload({ serial: item }))
+-            }
+-            isLoadingSerialItem.value = false
+-            dataUpload.value = [...selectedSerial.value] = [...data] // check if right conditions get a existing item serial
+-            if (!valueProvider.value && props.transaction_type !== 'transfer_request') {
+-                if (data.length === 0) {
+-                    selectedVariants.value = {}
+-                    await fetchItemSerial()
+-                }
+-            }
+-
+-            if ((isSelectedSerial.value || formData.value.selectedSerial) && store.formMode !== 'view') {
+-                await getSerial()
+-            }
+-            await serialStore.onValidateSelectAll()
+-        } catch (error) {
+-            isLoadingSerialItem.value = false
+-        }
+-    }
+-    watchEffect(async () => {
+-        const { formMode, indexItemInventory } = store
+-
+-        if (formMode === 'edit' || formMode === 'view') {
+-            const item = props.data[indexItemInventory]
+-
+-            if (item) {
+-                formData.value = {
+-                    id: item.id,
+-                    warehouse: item.warehouse_info,
+-                    location: item.location_info,
+-                    quantity: item.quantity,
+-                    cost: item.cost,
+-                    description: item.description,
+-                    item: item.item,
+-                    item_info: item.item_info,
+-                    item_uom: item.item_uom_info,
+-                    serial_file: item.serial_file,
+-                    card_number_file: item.card_number_file,
+-                    isVariant: item.isVariant,
+-                    is_track_serial: item?.is_track_serial,
+-                    require_serial: item?.require_serial,
+-                    price: item?.price ?? undefined,
+-                    action: props.parentFormMode == 'create' ? 'create' : 'update',
+-
+-                    from_warehouse: item?.from_warehouse_info,
+-                    to_warehouse: item?.to_warehouse_info,
+-                    from_location: item?.from_location_info,
+-                    to_location: item?.to_location_info,
+-                    request_qty: item?.request_qty ?? undefined,
+-
+-                    adjust_type: item?.adjust_type,
+-                    adjust_qty: item?.adjust_qty,
+-                    adjust_cost: item?.adjust_cost,
+-
+-                    fifo_transaction: item?.fifo_transaction,
+-                    fifo_transaction_info: item?.fifo_transaction_info,
+-                    selectedSerial: item?.selectedSerial,
+-                    txn_dtl_object_id: item?.txn_dtl_object_id,
+-                    txn_dtl_content_type: item?.txn_dtl_content_type,
+-                    total_cost: item?.total_cost,
+-                    unit_cost_base_uom: item?.unit_cost_base_uom,
+-                    unit_cost_uom: item?.unit_cost_uom,
+-                    issue: item?.issue,
+-                    issue_info: item?.issue_info,
+-                    available_qty_uom: item?.available_qty_uom,
+-                    allow_negative: item?.allow_negative,
+-                }
+-                // selectedSerial.value = !!item?.selectedSerial
+-                localAvailableQty.value = item?.available_qty_uom
+-                isFifo.value = !object.isEmpty(item?.fifo_transaction_info)
+-            }
+-        } else if (formMode === 'create') {
+-            emptyFormdata()
+-            isSelectedSerial.value = false
+-        }
+-    })
+-
+-    const getItemSerialFromIssue = async id => {
+-        if (dataUpload.value.length !== 0) return
+-        isLoadingSerialItem.value = true
+-        try {
+-            const res = await itemSerial.getItemSerialByIssueId(id, { paging: false })
+-            const data = res.data
+-            isLoadingSerialItem.value = false
+-            dataUpload.value = [...selectedSerial.value] = [
+-                ...data.map(d => new DataUpload({ serial: d.serial, card_number: d.card_number })),
+-            ] // check if right conditions get a existing item serial
+-
+-            if ((isSelectedSerial.value || formData.value.selectedSerial) && store.formMode !== 'view') {
+-                await getSerial()
++    watch(
++        () => ({
++            formMode: store.formMode,
++            indexItemInventory: store.indexItemInventory,
++            item: props.data[store.indexItemInventory],
++            parentFormMode: props.parentFormMode,
++        }),
++        ({ formMode, item }) => {
++            if (formMode === 'edit' || formMode === 'view') {
++                loadFormDataFromItem(item)
++                return
+             }
+-            await serialStore.onValidateSelectAll()
+-        } catch (error) {
+-            isLoadingSerialItem.value = false
+-        }
+-    }
+-
+-    const getItemSerialAndCardNumber = async () => {
+-        if (dataUpload.value.length !== 0) return
+-        isLoadingSerialItem.value = true
+-        try {
+-            // get serial
+-            const { data: cardNumbers } = await itemSerial.getItemSerialById(formData.value.card_number_file, {})
+-            isLoadingSerialItem.value = false
+-            dataUpload.value = [...selectedSerial.value] = [
+-                ...cardNumbers.map(card => new DataUpload({ serial: card.serial, card_number: card.card_number })),
+-            ] // check if right conditions get a existing item serial
+ 
+-            if ((isSelectedSerial.value || formData.value.selectedSerial) && store.formMode !== 'view') {
+-                await getSerial()
++            if (formMode === 'create') {
++                emptyFormdata()
++                isSelectedSerial.value = false
+             }
+-            await serialStore.onValidateSelectAll()
+-        } catch (error) {
+-            isLoadingSerialItem.value = false
+-        }
+-    }
++        },
++        { deep: true, immediate: true }
++    )
+ 
+     watch(
+         () => store.isOpenDialog,
+@@ -1560,9 +550,25 @@
+         )
+     })
+ 
+-    watchEffect(async () => {
+-        if (store.formMode === 'view' || !isDirtyState.value) return
+-        const {
++    watch(
++        () => ({
++            formMode: store.formMode,
++            isDirtyState: isDirtyState.value,
++            transactionType: props.transaction_type,
++            item: formData.value.item,
++            item_uom: formData.value.item_uom,
++            from_location: formData.value.from_location,
++            location: formData.value.location,
++            quantity: formData.value.quantity,
++            txn_dtl_object_id: formData.value.txn_dtl_object_id,
++            cost: formData.value.cost,
++            warehouse: formData.value.warehouse,
++            from_warehouse: formData.value.from_warehouse,
++        }),
++        async ({
++            formMode,
++            isDirtyState,
++            transactionType,
+             item,
+             item_uom,
+             from_location,
+@@ -1572,23 +578,26 @@
+             cost,
+             warehouse,
+             from_warehouse,
+-        } = formData.value
+-        const isValidItem = item && item_uom && quantity
+-        const isValidLocation = location && isValidItem
++        }) => {
++            if (formMode === 'view' || !isDirtyState) return
+ 
+-        // Perform cost calculation based on the transaction type
+-        if (
+-            (props.transaction_type === 'transfer' || (txn_dtl_object_id && props.transaction_type === 'receipt')) &&
+-            from_location &&
+-            isValidItem
+-        ) {
+-            await getCost(item, item_uom.id, from_location.id, quantity, from_warehouse?.id ?? from_warehouse)
+-        } else if (props.transaction_type === 'issue' && isValidLocation) {
+-            await getCost(item, item_uom.id, location.id, quantity, warehouse?.id)
+-        } else {
+-            formData.value.total_cost = parseFloat(quantity * cost).toFixed(2)
++            const isValidItem = item && item_uom && quantity
++            const isValidLocation = location && isValidItem
++
++            // Perform cost calculation based on the transaction type
++            if (
++                (transactionType === 'transfer' || (txn_dtl_object_id && transactionType === 'receipt')) &&
++                from_location &&
++                isValidItem
++            ) {
++                await getCost(item, item_uom.id, from_location.id, quantity, from_warehouse?.id ?? from_warehouse)
++            } else if (transactionType === 'issue' && isValidLocation) {
++                await getCost(item, item_uom.id, location.id, quantity, warehouse?.id)
++            } else {
++                formData.value.total_cost = parseFloat(quantity * cost).toFixed(2)
++            }
+         }
+-    })
++    )
+ 
+     const onDialog = data => {
+         if (data == false) {
+@@ -1601,13 +610,6 @@
+         }
+     }
+ 
+-    const doFetchSerial = async () => {
+-        if (!valueProvider.value && isItemHasSerial.value) {
+-            await fetchItemSerial()
+-        } else {
+-            dataUpload.value = [...selectedSerial.value] = []
+-        }
+-    }
+     const assignFifoValue = () => {
+         isFifo.value =
+             formData.value.location && formData.value.item_info?.valuation_method === 'fifo' && formData.value.item_uom
+@@ -1656,44 +658,7 @@
+     const preFormData = () => {
+         const { indexItemInventory } = store
+         const item = props.data[indexItemInventory]
+-        formData.value = {
+-            id: item?.id ?? undefined,
+-            warehouse: item?.warehouse_info,
+-            location: item?.location_info,
+-            quantity: item?.quantity,
+-            cost: item?.cost,
+-            description: item?.description,
+-            item: item?.item,
+-            item_info: item?.item_info,
+-            item_uom: item?.item_uom_info,
+-            serial_file: item?.serial_file,
+-            card_number_file: item?.card_number_file,
+-            isVariant: item?.isVariant ?? false,
+-            is_track_serial: item?.is_track_serial,
+-            require_serial: item?.require_serial,
+-            price: item?.price ?? undefined,
+-            action: item?.id ? 'update' : 'create',
+-
+-            from_warehouse: item?.from_warehouse_info,
+-            to_warehouse: item?.to_warehouse_info,
+-            from_location: item?.from_location_info,
+-            to_location: item?.to_location_info,
+-            request_qty: item?.request_qty ?? undefined,
+-
+-            adjust_type: item?.adjust_type,
+-            adjust_qty: item?.adjust_qty,
+-            adjust_cost: item?.adjust_cost,
+-
+-            fifo_transaction: item?.fifo_transaction_info,
+-            fifo_transaction_info: item?.fifo_transaction,
+-            txn_dtl_object_id: item?.txn_dtl_object_id ?? null,
+-            txn_dtl_content_type: item?.txn_dtl_content_type ?? null,
+-            total_cost: item?.total_cost ?? 0,
+-            unit_cost_uom: item?.unit_cost_uom ?? 0,
+-            unit_cost_base_uom: item?.unit_cost_base_uom ?? 0,
+-            issue: item?.issue,
+-            issue_info: item?.issue_info,
+-        }
++        formData.value = buildInventoryDialogFormData(item)
+         variants.value = []
+         selectedVariants.value = {}
+         // formData.value.cost = null
+diff --git a/src/modules/inventory/components/dialog/InventoryDialogDetailTab.vue b/src/modules/inventory/components/dialog/InventoryDialogDetailTab.vue
+new file mode 100644
+index 0000000000..6242d17df0
+--- /dev/null
++++ b/src/modules/inventory/components/dialog/InventoryDialogDetailTab.vue
+@@ -0,0 +1,712 @@
++<template>
++    <v-window-item value="detail">
++        <div class="pt-4">
++            <v-row
++                v-if="!['transfer', 'transfer_request'].includes(transaction_type)"
++                class="gutter px-4"
++                :class="variants.length > 0 ? 'pb-3' : ''"
++            >
++                <v-col v-if="external_reference && transaction_type === 'receipt'" cols="12" md="4">
++                    <base-autocomplete
++                        v-model:items="formData.issue_info"
++                        v-model="formData.issue"
++                        label="Issue"
++                        item-title="reference_no"
++                        item-value="id"
++                        :error-messages="errorMessage?.issue || formErrors[store.indexItemInventory]?.issue"
++                        :mode="store.formMode"
++                        :api-service="apiLookupService.lookupIssueInTransit"
++                        :payload="{
++                            transfer_request: external_reference,
++                        }"
++                        :table-headers="headers"
++                        hide-details="auto"
++                    >
++                        <template #transaction_type="{ item }">
++                            <span>{{ capitalize(item.transaction_type) }}</span>
++                        </template>
++
++                        <template #status="{ item }">
++                            <div class="d-flex">
++                                <base-status :status="item.status" />
++                            </div>
++                        </template>
++
++                        <template #state="{ item }">
++                            <div class="d-flex">
++                                <base-status :status="item.state" />
++                            </div>
++                        </template>
++                    </base-autocomplete>
++                </v-col>
++                <v-col
++                    cols="12"
++                    :md="[external_reference && transaction_type === 'receipt' ? '8' : '12']"
++                    style="padding-bottom: unset"
++                >
++                    <base-autocomplete
++                        v-if="!external_reference"
++                        v-model="formData.item"
++                        v-model:items="formData.item_info"
++                        label="Inventory"
++                        item-title="name"
++                        item-value="id"
++                        item-pre-title="reference_no"
++                        class="required"
++                        hide-details="auto"
++                        :table-headers="INVENTORY_IMAGE_HEADERS"
++                        :api-service="apiLookupService.item"
++                        :error-messages="errorMessage?.item || formErrors[store.indexItemInventory]?.item"
++                        :mode="store.formMode"
++                        :params="{ item_class__type: 'equal,stock', status: INVENTORY_STATUS_FILTER }"
++                        :payload="{
++                            transaction_type: transaction_type === 'transfer_request' ? 'transfer' : transaction_type,
++                        }"
++                        @update:items="onSelectItem"
++                    >
++                        <template #name="{ item }">
++                            <AppProfileCard
++                                :src="item?.file?.image_thumbnail_url ?? itemPlaceholder"
++                                :name="item?.reference_no"
++                                :headline="item?.name"
++                                headline-max-width="100%"
++                                headline-size="0.875rem"
++                                :error-src="itemPlaceholder"
++                                @image-click="onViewImage($event, item)"
++                            />
++                        </template>
++                        <template #is_active="{ item }">
++                            <BaseField :model-value="item.is_active" field-type="boolean" mode="view" />
++                        </template>
++                    </base-autocomplete>
++                    <base-autocomplete
++                        v-else-if="transaction_type === 'receipt'"
++                        v-model="formData.item"
++                        v-model:items="formData.item_info"
++                        label="Inventory"
++                        item-title="name"
++                        item-value="id"
++                        item-pre-title="reference_no"
++                        class="required"
++                        hide-details="auto"
++                        :table-headers="INVENTORY_ITEM_IMAGE_HEADERS"
++                        :api-service="apiLookupService.lookupInventoryFromIssue"
++                        :error-messages="errorMessage?.item || formErrors[store.indexItemInventory]?.item"
++                        :mode="store.formMode"
++                        :payload="{
++                            transaction_id: [formData.issue],
++                            external_type,
++                            transaction_type: transaction_type,
++                        }"
++                        @update:items="onSelectItem"
++                    >
++                        <template #[`item.name`]="{ item }">
++                            <AppProfileCard
++                                :src="item?.item?.files[0]?.image_thumbnail_url ?? itemPlaceholder"
++                                :name="item?.item?.reference_no"
++                                :headline="item?.item?.name"
++                                headline-max-width="100%"
++                                headline-size="0.875rem"
++                                :error-src="itemPlaceholder"
++                                @image-click="onViewImage($event, item?.item)"
++                            />
++                        </template>
++                        <template #[`item.is_active`]="{ item }">
++                            <BaseField :model-value="item?.item?.is_active" field-type="boolean" mode="view" />
++                        </template>
++                    </base-autocomplete>
++                    <base-autocomplete
++                        v-else-if="transaction_type === 'issue'"
++                        v-model="formData.item"
++                        v-model:items="formData.item_info"
++                        label="Inventory"
++                        item-title="name"
++                        item-value="id"
++                        item-pre-title="reference_no"
++                        class="required"
++                        hide-details="auto"
++                        :table-headers="INVENTORY_ITEM_IMAGE_HEADERS"
++                        :api-service="apiLookupService.lookupInventoryFromTransferRequest"
++                        :error-messages="errorMessage?.item || formErrors[store.indexItemInventory]?.item"
++                        :mode="store.formMode"
++                        :payload="{
++                            transaction_id: external_reference,
++                            transaction_type: transaction_type,
++                        }"
++                        @update:items="onSelectItem"
++                    >
++                        <template #[`item.name`]="{ item }">
++                            <AppProfileCard
++                                :src="item?.item?.files[0]?.image_thumbnail_url ?? itemPlaceholder"
++                                :name="item?.item?.reference_no"
++                                :headline="item?.item?.name"
++                                headline-max-width="100%"
++                                headline-size="0.875rem"
++                                :error-src="itemPlaceholder"
++                                @image-click="onViewImage($event, item?.item)"
++                            />
++                        </template>
++                        <template #[`item.is_active`]="{ item }">
++                            <BaseField :model-value="item?.item?.is_active" field-type="boolean" mode="view" />
++                        </template>
++                    </base-autocomplete>
++                </v-col>
++            </v-row>
++            <v-row
++                v-if="['transfer', 'transfer_request'].includes(transaction_type)"
++                class="gutter px-4"
++                :class="variants.length > 1 ? '' : 'mb-n6'"
++            >
++                <v-col cols="4" md="12">
++                    <base-autocomplete
++                        v-model="formData.item"
++                        v-model:items="formData.item_info"
++                        label="Inventory"
++                        item-title="name"
++                        item-value="id"
++                        item-pre-title="reference_no"
++                        field-type="auto_complete"
++                        class="required"
++                        hide-details="auto"
++                        :table-headers="INVENTORY_IMAGE_HEADERS"
++                        :api-service="apiLookupService.item"
++                        :error-messages="errorMessage?.item"
++                        :mode="store.formMode"
++                        :params="{ item_class__type: 'equal,stock', status: INVENTORY_STATUS_FILTER }"
++                        :payload="{
++                            transaction_type: transaction_type === 'transfer_request' ? 'transfer' : transaction_type,
++                        }"
++                        @update:items="onSelectItem"
++                    >
++                        <template #name="{ item }">
++                            <AppProfileCard
++                                :src="item?.file?.image_thumbnail_url ?? itemPlaceholder"
++                                :name="item?.reference_no"
++                                :headline="item?.name"
++                                headline-max-width="100%"
++                                headline-size="0.875rem"
++                                :error-src="itemPlaceholder"
++                                @image-click="onViewImage($event, item)"
++                            />
++                        </template>
++                        <template #is_active="{ item }">
++                            <BaseField :model-value="item.is_active" field-type="boolean" mode="view" />
++                        </template>
++                    </base-autocomplete>
++                </v-col>
++            </v-row>
++
++            <InventoryVariantSelector
++                :selected-variants="selectedVariants"
++                :variants="variants"
++                :loading="loadingVaraint"
++                @update:selected-variants="emit('update:selectedVariants', $event)"
++                @select="onSelectedVariant"
++            />
++            <v-row v-if="!['transfer', 'transfer_request'].includes(transaction_type)" class="gutter px-4">
++                <v-col cols="4" md="4">
++                    <BaseAutocomplete
++                        v-model="formData.warehouse"
++                        label="Warehouse"
++                        field-type="auto_complete"
++                        class="required"
++                        item-title="name"
++                        item-value="id"
++                        hide-details="auto"
++                        :table-headers="warehouseHeaders"
++                        :api-service="apiLookupService.warehouseLocation"
++                        :params="{ is_active: true }"
++                        :error-messages="errorMessage?.warehouse"
++                        :disabled="isDisable"
++                        :mode="store.formMode"
++                        :trigger-on-focus="true"
++                        @selected-item="selectWarehouse"
++                    />
++                </v-col>
++                <v-col cols="4" md="4">
++                    <BaseAutocomplete
++                        v-model="formData.location"
++                        label="Location"
++                        field-type="auto_complete"
++                        item-title="name"
++                        item-value="id"
++                        class="required"
++                        hide-details="auto"
++                        :table-headers="LOCATION_HEADERS"
++                        :disabled="!formData.warehouse"
++                        :api-service="apiLookupService.getLocation"
++                        :params="{ warehouse_id: formData.warehouse?.id }"
++                        :error-messages="errorMessage?.location || formErrors[store.indexItemInventory]?.location"
++                        :mode="store.formMode"
++                        @selected-item="onSelectLocation"
++                    />
++                </v-col>
++                <v-col cols="4" md="4">
++                    <BaseAutocomplete
++                        v-model="formData.item_uom"
++                        field-type="auto_complete"
++                        label="Item UOM"
++                        hide-details="auto"
++                        class="required"
++                        item-title="uom_display_name"
++                        item-value="id"
++                        :table-headers="uomHeaders"
++                        :api-service="apiLookupService.getItemUom"
++                        :payload="{ item: formData.item }"
++                        :disabled="!formData.item"
++                        :error-messages="errorMessage?.item_uom"
++                        :mode="store.formMode"
++                        @selected-item="selectItemUom"
++                    >
++                    </BaseAutocomplete>
++                </v-col>
++            </v-row>
++            <!--                    transfer or transfer request section-->
++            <v-row v-else-if="transaction_type === 'transfer_request'" class="gutter px-4 pt-3">
++                <v-col cols="4" md="4" style="padding-top: unset !important">
++                    <BaseAutocomplete
++                        :model-value="fromWarehouse"
++                        label="From Warehouse"
++                        class="required"
++                        item-title="name"
++                        item-value="id"
++                        item-pre-title="reference_no"
++                        hide-details="auto"
++                        :error-messages="errorMessage?.from_warehouse"
++                        :mode="store.formMode"
++                        disabled
++                    />
++                </v-col>
++
++                <v-col cols="4" md="4" style="padding-top: unset !important">
++                    <base-field
++                        v-model="formData.request_qty"
++                        label="Request Quantity"
++                        hide-details="auto"
++                        field-type="currency"
++                        :precision="4"
++                        :error-messages="errorMessage?.request_qty"
++                        :mode="store.formMode"
++                    />
++                </v-col>
++                <v-col cols="4" md="4" style="padding-top: unset !important">
++                    <BaseAutocomplete
++                        v-model="formData.item_uom"
++                        field-type="auto_complete"
++                        label="Item UOM"
++                        hide-details="auto"
++                        class="required"
++                        item-title="uom_display_name"
++                        item-value="id"
++                        :table-headers="uomHeaders"
++                        :api-service="apiLookupService.getItemUom"
++                        :payload="{ item: formData.item }"
++                        :disabled="!formData.item"
++                        :error-messages="errorMessage?.item_uom"
++                        :mode="store.formMode"
++                        @selected-item="selectItemUom"
++                    />
++                </v-col>
++            </v-row>
++
++            <v-row v-else-if="transaction_type === 'transfer'" class="gutter px-4">
++                <v-col cols="3">
++                    <BaseAutocomplete
++                        v-model="formData.item_uom"
++                        field-type="auto_complete"
++                        label="Item UOM"
++                        hide-details="auto"
++                        class="required"
++                        item-title="uom_display_name"
++                        item-value="id"
++                        :table-headers="uomHeaders"
++                        :api-service="apiLookupService.getItemUom"
++                        :payload="{ item: formData.item }"
++                        :disabled="!formData.item"
++                        :error-messages="errorMessage?.item_uom"
++                        :mode="store.formMode"
++                        @selected-item="selectItemUom"
++                    />
++                </v-col>
++                <v-col cols="3">
++                    <base-field
++                        v-model="formData.quantity"
++                        label="Quantity"
++                        hide-details="auto"
++                        field-type="currency"
++                        :precision="4"
++                        :error-messages="errorMessage?.quantity"
++                        :mode="store.formMode"
++                        @update:model-value="markDirty"
++                    />
++                </v-col>
++                <v-col cols="3">
++                    <base-field
++                        v-model="formData.cost"
++                        readonly
++                        label="Cost"
++                        prepend-inner-icon="mdi-currency-usd"
++                        :clearable="false"
++                        hide-details="auto"
++                        field-type="currency"
++                        :precision="2"
++                        :error-messages="errorMessage?.cost"
++                        :mode="store.formMode"
++                        :loading="loadingCost"
++                    />
++                </v-col>
++                <v-col cols="3">
++                    <base-field
++                        v-model="formData.total_cost"
++                        label="Total Cost"
++                        field-type="currency"
++                        :precision="2"
++                        readonly
++                        :clearable="false"
++                        prepend-inner-icon="mdi-currency-usd"
++                        :mode="store.formMode"
++                        class="bg-surface"
++                        hide-details="auto"
++                        style="border-radius: 4px"
++                    />
++                </v-col>
++            </v-row>
++            <div v-if="transaction_type != 'transfer'">
++                <div v-if="transaction_type != 'adjustment' && transaction_type != 'transfer_request'" class="pa-3">
++                    <div class="pa-4 mx-1 bg-contrast rounded-lg">
++                        <div class="d-flex align-center mb-4" style="position: sticky">
++                            <v-icon icon="mdi-package" color="greenPrimary" class="pr-1"></v-icon>
++                            <span>Stock</span>
++                        </div>
++                        <v-row class="gutter">
++                            <v-col cols="4" md="4">
++                                <base-field
++                                    v-model="formData.quantity"
++                                    class="required"
++                                    label="Quantity"
++                                    field-type="currency"
++                                    :precision="4"
++                                    :error-messages="
++                                        errorMessage?.quantity || formErrors[store.indexItemInventory]?.quantity
++                                    "
++                                    :mode="store.formMode"
++                                    hide-details="auto"
++                                    @update:model-value="markDirty"
++                                />
++                            </v-col>
++
++                            <v-col cols="4" md="4">
++                                <base-field
++                                    v-model="formData.cost"
++                                    class="required"
++                                    label="Cost"
++                                    prepend-inner-icon="mdi-currency-usd"
++                                    field-type="currency"
++                                    :precision="2"
++                                    :error-messages="errorMessage?.cost"
++                                    :mode="store.formMode"
++                                    :loading="loadingCost"
++                                    :readonly="isGetCostByLookup"
++                                    :clearable="false"
++                                    hide-details="auto"
++                                    @update:model-value="markDirty"
++                                />
++                            </v-col>
++
++                            <v-col cols="4" md="4">
++                                <base-field
++                                    v-model="formData.total_cost"
++                                    label="Total Cost"
++                                    field-type="currency"
++                                    :precision="2"
++                                    readonly
++                                    :clearable="false"
++                                    prepend-inner-icon="mdi-currency-usd"
++                                    :mode="store.formMode"
++                                    hide-details="auto"
++                                />
++                            </v-col>
++                        </v-row>
++                    </div>
++                </div>
++
++                <div v-if="transaction_type == 'issue'" class="px-3 pb-3">
++                    <div class="pa-4 mx-1 bg-contrast rounded-lg">
++                        <div class="d-flex align-center mb-4" style="position: sticky">
++                            <v-icon icon="mdi-currency-usd" color="greenPrimary" class="pr-1"></v-icon>
++                            <span>Price</span>
++                        </div>
++                        <v-row class="gutter">
++                            <v-col cols="4" md="4">
++                                <base-field
++                                    v-model="formData.quantity"
++                                    class="required"
++                                    label="Quantity"
++                                    readonly
++                                    :clearable="false"
++                                    :error-messages="errorMessage?.quantity"
++                                    :mode="store.formMode"
++                                    hide-details="auto"
++                                    field-type="currency"
++                                    :precision="4"
++                                />
++                            </v-col>
++
++                            <v-col cols="4" md="4">
++                                <base-field
++                                    v-model="formData.price"
++                                    class="required"
++                                    label="Price"
++                                    prepend-inner-icon="mdi-currency-usd"
++                                    :error-messages="errorMessage?.price"
++                                    :mode="store.formMode"
++                                    hide-details="auto"
++                                    field-type="currency"
++                                    :precision="2"
++                                />
++                            </v-col>
++
++                            <v-col cols="4" md="4">
++                                <base-field
++                                    v-model="calTotalAmount"
++                                    label="Total Amount"
++                                    readonly
++                                    :clearable="false"
++                                    prepend-inner-icon="mdi-currency-usd"
++                                    :mode="store.formMode"
++                                    hide-details="auto"
++                                    field-type="currency"
++                                    :precision="2"
++                                />
++                            </v-col>
++                        </v-row>
++                    </div>
++                </div>
++
++                <div v-if="transaction_type == 'adjustment'" class="pa-3">
++                    <div class="pa-4 mx-1 bg-contrast rounded-lg">
++                        <div class="d-flex align-center mb-4" style="position: sticky">
++                            <v-icon icon="mdi-package" color="greenPrimary" class="pr-1"></v-icon>
++                            <span>Stock</span>
++                        </div>
++                        <v-row class="gutter">
++                            <v-col cols="3" md="3">
++                                <base-field
++                                    v-model="formData.adjust_type"
++                                    class="required"
++                                    label="Adjust Type"
++                                    hide-details="auto"
++                                    field-type="select"
++                                    :items="ADJUST_TYPES"
++                                    item-title="text"
++                                    item-value="value"
++                                    :error-messages="errorMessage?.adjust_type"
++                                    :clearable="false"
++                                    :mode="store.formMode"
++                                    @update:model-value="onSelectAdjustType"
++                                />
++                            </v-col>
++
++                            <v-col cols="3" md="3">
++                                <base-field
++                                    v-model="formData.adjust_qty"
++                                    class="required"
++                                    label="Quantity"
++                                    hide-details="auto"
++                                    field-type="currency"
++                                    :precision="4"
++                                    :error-messages="errorMessage?.adjust_qty"
++                                    :mode="store.formMode"
++                                />
++                            </v-col>
++                            <v-col cols="3" md="3">
++                                <base-field
++                                    v-model="formData.adjust_cost"
++                                    class="required"
++                                    label="Total Cost"
++                                    hide-details="auto"
++                                    field-type="currency"
++                                    :precision="2"
++                                    :error-messages="errorMessage?.adjust_cost"
++                                    :mode="store.formMode"
++                                />
++                            </v-col>
++                            <v-col cols="3" md="3">
++                                <BaseAutocomplete
++                                    v-model="formData.fifo_transaction"
++                                    v-model:items="formData.fifo_transaction_info"
++                                    class="required"
++                                    label="Fifo Transaction"
++                                    hide-details="auto"
++                                    item-title="movement.reference_no"
++                                    item-pre-title="item.reference_no"
++                                    item-value="id"
++                                    :error-messages="errorMessage?.fifo_transaction"
++                                    :api-service="apiLookupService.getFifoTransaction"
++                                    :payload="{
++                                        item_id: formData.item,
++                                        location_id: formData.location?.id,
++                                    }"
++                                    :disabled="!isFifo"
++                                    :mode="store.formMode"
++                                    :trigger-on-focus="true"
++                                    :table-headers="FIFO_TRANSACTION_HEADERS"
++                                ></BaseAutocomplete>
++                            </v-col>
++                        </v-row>
++                    </div>
++                </div>
++            </div>
++            <div v-else>
++                <div class="pa-3">
++                    <div class="pa-4 mx-1 bg-contrast rounded-lg">
++                        <div class="d-flex align-center mb-4" style="position: sticky">
++                            <v-icon icon="mdi-dots-grid" color="greenPrimary" class="pr-1"></v-icon>
++                            <span>Location</span>
++                        </div>
++                        <v-row class="gutter">
++                            <v-col cols="6" md="6">
++                                <BaseAutocomplete
++                                    v-model="formData.from_warehouse"
++                                    class="required"
++                                    label="From Warehouse"
++                                    item-title="name"
++                                    item-value="id"
++                                    item-pre-title="reference_no"
++                                    hide-details="auto"
++                                    :table-headers="warehouseHeaders"
++                                    :api-service="apiLookupService.warehouseLocation"
++                                    :params="{ is_active: true }"
++                                    :error-messages="errorMessage?.from_warehouse"
++                                    :mode="store.formMode"
++                                    @selected-item="$target => transferWarehouse('from_warehouse', $target)"
++                                >
++                                </BaseAutocomplete>
++                            </v-col>
++
++                            <v-col cols="6" md="6">
++                                <BaseAutocomplete
++                                    v-model="formData.to_warehouse"
++                                    label="To Warehouse"
++                                    class="required"
++                                    item-title="name"
++                                    item-value="id"
++                                    hide-details="auto"
++                                    :table-headers="warehouseHeaders"
++                                    :api-service="apiLookupService.warehouseLocation"
++                                    :params="{ is_active: true }"
++                                    :error-messages="errorMessage?.to_warehouse"
++                                    :mode="store.formMode"
++                                    @selected-item="$target => transferWarehouse('to_warehouse', $target)"
++                                />
++                            </v-col>
++                            <v-col cols="6" md="6">
++                                <BaseAutocomplete
++                                    v-model="formData.from_location"
++                                    class="required"
++                                    label="From Location"
++                                    item-title="name"
++                                    item-value="id"
++                                    hide-details="auto"
++                                    :table-headers="LOCATION_HEADERS"
++                                    :disabled="!formData.from_warehouse"
++                                    :api-service="apiLookupService.getLocation"
++                                    :params="{ warehouse_id: formData.from_warehouse?.id }"
++                                    return-object
++                                    :error-messages="errorMessage?.from_location"
++                                    :mode="store.formMode"
++                                    @selected-item="onUpdateFromLocation"
++                                >
++                                </BaseAutocomplete>
++                            </v-col>
++
++                            <v-col cols="6" md="6">
++                                <BaseAutocomplete
++                                    v-model="formData.to_location"
++                                    label="To Location"
++                                    class="required"
++                                    field-type="auto_complete"
++                                    item-title="name"
++                                    item-value="id"
++                                    hide-details="auto"
++                                    :table-headers="LOCATION_HEADERS"
++                                    :disabled="!formData.to_warehouse"
++                                    :api-service="apiLookupService.getLocation"
++                                    :params="{ warehouse_id: formData.to_warehouse?.id }"
++                                    :error-messages="errorMessage?.to_location"
++                                    :mode="store.formMode"
++                                    @selected-item="formData.to_location = $event"
++                                />
++                            </v-col>
++                        </v-row>
++                    </div>
++                </div>
++            </div>
++
++            <v-row class="gutter px-4">
++                <v-col cols="12" md="12">
++                    <base-field
++                        v-model="formData.description"
++                        class=""
++                        label="Remark"
++                        field-type="textarea"
++                        hide-details="auto"
++                        :mode="store.formMode"
++                        row-height="15"
++                        rows="3"
++                    />
++                </v-col>
++            </v-row>
++        </div>
++    </v-window-item>
++</template>
++
++<script lang="ts" setup>
++    import { headers, INVENTORY_ITEM_IMAGE_HEADERS } from '@@/inventory/data/receipt/constants'
++    import { capitalize } from '@/utils/str'
++    import InventoryVariantSelector from '@@/inventory/components/dialog/InventoryVariantSelector.vue'
++    import {
++        ADJUST_TYPES,
++        INVENTORY_IMAGE_HEADERS,
++        INVENTORY_STATUS_FILTER,
++        LOCATION_HEADERS,
++        uomHeaders,
++        warehouseHeaders,
++    } from '@@/inventory/data'
++    import { FIFO_TRANSACTION_HEADERS } from '@@/inventory/data/adjustment'
++    import AppProfileCard from '@/components/app/AppProfileCard.vue'
++    import itemPlaceholder from '@/assets/images/item-placeholder.png'
++
++    defineProps({
++        transaction_type: String,
++        external_reference: Number,
++        external_type: String,
++        parentFormMode: String,
++        fromWarehouse: Object,
++        formErrors: Object,
++        isDisable: Boolean,
++        formData: Object,
++        store: Object,
++        apiLookupService: Object,
++        errorMessage: Object,
++        variants: Array,
++        selectedVariants: Object,
++        loadingVaraint: Boolean,
++        loadingCost: Boolean,
++        isGetCostByLookup: Boolean,
++        calTotalAmount: [String, Number],
++        isFifo: Boolean,
++        onSelectItem: Function,
++        onViewImage: Function,
++        selectWarehouse: Function,
++        onSelectLocation: Function,
++        selectItemUom: Function,
++        onSelectAdjustType: Function,
++        transferWarehouse: Function,
++        onUpdateFromLocation: Function,
++    })
++
++    const emit = defineEmits(['update:selectedVariants', 'selectVariant', 'dirty'])
++    const markDirty = () => emit('dirty')
++    const onSelectedVariant = (...args) => emit('selectVariant', ...args)
++</script>
+diff --git a/src/modules/inventory/components/dialog/InventoryVariantSelector.vue b/src/modules/inventory/components/dialog/InventoryVariantSelector.vue
+new file mode 100644
+index 0000000000..ecbbbed892
+--- /dev/null
++++ b/src/modules/inventory/components/dialog/InventoryVariantSelector.vue
+@@ -0,0 +1,65 @@
++<template>
++    <v-row v-if="variants.length > 1 || loading" class="gutter px-6">
++        <div class="pa-4 mx-1 bg-contrast w-100 rounded-lg" style="max-height: 400px; overflow: auto">
++            <div class="d-flex align-center" style="position: sticky">
++                <v-icon icon="mdi-dots-grid" color="greenPrimary" class="pr-1"></v-icon>
++                <span>Select Variant</span>
++            </div>
++            <div v-if="loading" class="d-flex justify-center">
++                <v-progress-circular indeterminate color="primary"></v-progress-circular>
++            </div>
++
++            <div>
++                <div
++                    v-for="(items, inx) in variants"
++                    :key="inx"
++                    class="d-flex align-center my-4 bg-surface px-2 rounded-lg"
++                >
++                    <div v-tooltip-overflow class="pl-3" style="min-width: 17%; max-width: 17%">
++                        {{ items.attribute?.name }}
++                    </div>
++                    <v-divider vertical class="my-2 mr-6"></v-divider>
++                    <v-sheet class="d-flex align-content-space-around flex-wrap" min-height="30">
++                        <div v-for="(val, idx) in items?.values" :key="idx" class="align-center">
++                            <v-radio-group
++                                :model-value="selectedVariants[inx]"
++                                inline
++                                hide-details
++                                @update:model-value="onSelectVariant(items, inx, idx, $event)"
++                            >
++                                <v-radio :label="val.name" :value="val.id" color="primary" hide-details></v-radio>
++                            </v-radio-group>
++                        </div>
++                    </v-sheet>
++                </div>
++            </div>
++        </div>
++    </v-row>
++</template>
++
++<script lang="ts" setup>
++    const props = defineProps({
++        variants: {
++            type: Array,
++            default: () => [],
++        },
++        loading: {
++            type: Boolean,
++            default: false,
++        },
++        selectedVariants: {
++            type: Object,
++            default: () => ({}),
++        },
++    })
++
++    const emit = defineEmits(['update:selectedVariants', 'select'])
++
++    const onSelectVariant = (items, parentIndex, childIndex, value) => {
++        emit('update:selectedVariants', {
++            ...props.selectedVariants,
++            [parentIndex]: value,
++        })
++        emit('select', items, parentIndex, childIndex)
++    }
++</script>
+diff --git a/src/modules/inventory/components/dialog/composables/useInventoryDialogForm.ts b/src/modules/inventory/components/dialog/composables/useInventoryDialogForm.ts
+new file mode 100644
+index 0000000000..c952ce88c6
+--- /dev/null
++++ b/src/modules/inventory/components/dialog/composables/useInventoryDialogForm.ts
+@@ -0,0 +1,54 @@
++type InventoryDialogAction = 'create' | 'update'
++
++export const resolveInventoryDialogAction = (item, parentFormMode?: string): InventoryDialogAction => {
++    if (parentFormMode === 'create') return 'create'
++    return item?.id ? 'update' : 'create'
++}
++
++export const buildInventoryDialogFormData = (
++    item,
++    action: InventoryDialogAction = resolveInventoryDialogAction(item)
++) => ({
++    id: item?.id ?? undefined,
++    action,
++
++    item: item?.item,
++    item_info: item?.item_info,
++    item_uom: item?.item_uom_info,
++    isVariant: item?.isVariant ?? false,
++    is_track_serial: item?.is_track_serial,
++    require_serial: item?.require_serial,
++
++    warehouse: item?.warehouse_info,
++    location: item?.location_info,
++    from_warehouse: item?.from_warehouse_info,
++    to_warehouse: item?.to_warehouse_info,
++    from_location: item?.from_location_info,
++    to_location: item?.to_location_info,
++
++    quantity: item?.quantity,
++    request_qty: item?.request_qty ?? undefined,
++    cost: item?.cost,
++    total_cost: item?.total_cost ?? 0,
++    price: item?.price ?? undefined,
++    unit_cost_base_uom: item?.unit_cost_base_uom ?? 0,
++    unit_cost_uom: item?.unit_cost_uom ?? 0,
++    available_qty_uom: item?.available_qty_uom,
++    allow_negative: item?.allow_negative,
++
++    adjust_type: item?.adjust_type,
++    adjust_qty: item?.adjust_qty,
++    adjust_cost: item?.adjust_cost,
++    fifo_transaction: item?.fifo_transaction,
++    fifo_transaction_info: item?.fifo_transaction_info,
++
++    serial_file: item?.serial_file,
++    card_number_file: item?.card_number_file,
++    selectedSerial: item?.selectedSerial,
++
++    txn_dtl_object_id: item?.txn_dtl_object_id ?? null,
++    txn_dtl_content_type: item?.txn_dtl_content_type ?? null,
++    issue: item?.issue,
++    issue_info: item?.issue_info,
++    description: item?.description,
++})
+diff --git a/src/modules/inventory/components/dialog/composables/useInventoryDialogSerialItems.ts b/src/modules/inventory/components/dialog/composables/useInventoryDialogSerialItems.ts
+new file mode 100644
+index 0000000000..dec1481b85
+--- /dev/null
++++ b/src/modules/inventory/components/dialog/composables/useInventoryDialogSerialItems.ts
+@@ -0,0 +1,185 @@
++import { nextTick, ref } from 'vue'
++import { DataUpload } from '@@/composables/useSerial'
++import object from '@/utils/object'
++
++export const useInventoryDialogSerialItems = ({
++    formData,
++    props,
++    store,
++    apiLookupService,
++    itemSerial,
++    serialStore,
++    serialRefs,
++    hasCardNumber,
++    isItemHasSerial,
++    valueProvider,
++    resetSelectedVariants,
++}) => {
++    const { isSelectAll, selectedSerial, isSelectedSerial, dataUpload } = serialRefs
++    const isLoadingSerialItem = ref(false)
++
++    const getSerial = async () => {
++        try {
++            isLoadingSerialItem.value = true
++            let currentPage = 1
++            const pageSize = 1000
++            let hasMoreData = true
++            const serialsSet: any = hasCardNumber.value ? new Map<string, DataUpload>() : new Set<string>()
++
++            if (hasCardNumber.value) {
++                dataUpload.value.forEach((item: DataUpload) => {
++                    serialsSet.set(item.serial, item)
++                })
++            } else {
++                dataUpload.value.forEach((serial: string) => {
++                    serialsSet.add(serial)
++                })
++            }
++
++            while (hasMoreData) {
++                const response = await apiLookupService.getItemSerial(
++                    {
++                        item: formData.value.item,
++                        paging: true,
++                        issue_detail_id:
++                            formData.value.txn_dtl_object_id && props.transaction_type === 'receipt'
++                                ? formData.value.txn_dtl_object_id
++                                : undefined,
++                        location: formData.value.from_location?.id ?? formData.value.location?.id ?? undefined,
++                    },
++                    {
++                        page: currentPage,
++                        page_size: pageSize,
++                    }
++                )
++
++                if (hasCardNumber.value) {
++                    response.data.results.forEach(item => {
++                        serialsSet.set(item.serial, new DataUpload({ serial: item.serial }))
++                    })
++                } else {
++                    response.data.results.forEach(item => {
++                        serialsSet.add(item.serial)
++                    })
++                }
++
++                if (currentPage % 3 === 0) {
++                    await nextTick()
++                }
++
++                hasMoreData = response.data.next !== null
++                currentPage++
++            }
++
++            dataUpload.value = hasCardNumber.value ? Array.from(serialsSet.values()) : Array.from(serialsSet)
++
++            if (dataUpload.value.length > 0) {
++                isSelectedSerial.value = true
++                formData.value.selectedSerial = true
++            }
++        } catch (error) {
++            console.error(error)
++        } finally {
++            isLoadingSerialItem.value = false
++        }
++    }
++
++    const fetchItemSerial = async () => {
++        if (
++            object.isEmpty(formData.value.txn_dtl_object_id) &&
++            object.isEmpty(formData.value.from_location) &&
++            object.isEmpty(formData.value.location) &&
++            store.formMode == 'view'
++        )
++            return
++        dataUpload.value = []
++        await getSerial()
++    }
++
++    const getItemSerial = async id => {
++        if (dataUpload.value.length !== 0) return
++        isLoadingSerialItem.value = true
++        try {
++            const res = await itemSerial.getItemSerialById(id, {})
++            let data = res.data
++            if (hasCardNumber.value) {
++                data = res.data.map(item => new DataUpload({ serial: item }))
++            }
++            isLoadingSerialItem.value = false
++            dataUpload.value = [...selectedSerial.value] = [...data]
++            if (!valueProvider.value && props.transaction_type !== 'transfer_request') {
++                if (data.length === 0) {
++                    resetSelectedVariants()
++                    await fetchItemSerial()
++                }
++            }
++
++            if ((isSelectedSerial.value || formData.value.selectedSerial) && store.formMode !== 'view') {
++                await getSerial()
++            }
++            await serialStore.onValidateSelectAll()
++        } catch (error) {
++            isLoadingSerialItem.value = false
++        }
++    }
++
++    const getItemSerialFromIssue = async id => {
++        if (dataUpload.value.length !== 0) return
++        isLoadingSerialItem.value = true
++        try {
++            const res = await itemSerial.getItemSerialByIssueId(id, { paging: false })
++            const data = res.data
++            isLoadingSerialItem.value = false
++            dataUpload.value = [...selectedSerial.value] = [
++                ...data.map(d => new DataUpload({ serial: d.serial, card_number: d.card_number })),
++            ]
++
++            if ((isSelectedSerial.value || formData.value.selectedSerial) && store.formMode !== 'view') {
++                await getSerial()
++            }
++            await serialStore.onValidateSelectAll()
++        } catch (error) {
++            isLoadingSerialItem.value = false
++        }
++    }
++
++    const getItemSerialAndCardNumber = async () => {
++        if (dataUpload.value.length !== 0) return
++        isLoadingSerialItem.value = true
++        try {
++            const { data: cardNumbers } = await itemSerial.getItemSerialById(formData.value.card_number_file, {})
++            isLoadingSerialItem.value = false
++            dataUpload.value = [...selectedSerial.value] = [
++                ...cardNumbers.map(card => new DataUpload({ serial: card.serial, card_number: card.card_number })),
++            ]
++
++            if ((isSelectedSerial.value || formData.value.selectedSerial) && store.formMode !== 'view') {
++                await getSerial()
++            }
++            await serialStore.onValidateSelectAll()
++        } catch (error) {
++            isLoadingSerialItem.value = false
++        }
++    }
++
++    const doFetchSerial = async () => {
++        if (!valueProvider.value && isItemHasSerial.value) {
++            await fetchItemSerial()
++        } else {
++            dataUpload.value = [...selectedSerial.value] = []
++        }
++    }
++
++    return {
++        isLoadingSerialItem,
++        isSelectAll,
++        selectedSerial,
++        isSelectedSerial,
++        dataUpload,
++        fetchItemSerial,
++        getItemSerial,
++        getItemSerialFromIssue,
++        getItemSerialAndCardNumber,
++        doFetchSerial,
++    }
++}
+diff --git a/src/modules/inventory/components/dialog/composables/useInventoryDialogSubmit.ts b/src/modules/inventory/components/dialog/composables/useInventoryDialogSubmit.ts
+new file mode 100644
+index 0000000000..05745caace
+--- /dev/null
++++ b/src/modules/inventory/components/dialog/composables/useInventoryDialogSubmit.ts
+@@ -0,0 +1,194 @@
++import { ref } from 'vue'
++import { fileServices } from '@/atom/base/base.apis'
++import { len } from '@/utils/core'
++
++export const useInventoryDialogSubmit = ({
++    formData,
++    props,
++    store,
++    emit,
++    itemSerial,
++    activeTab,
++    isItemHasSerial,
++    selectedSerial,
++    isSelectedSerial,
++    dataUpload,
++    isWrongTemplate,
++    errorSerial,
++    hasCardNumber,
++    localAvailableQty,
++    emptyFormdata,
++    t,
++}) => {
++    const saveLoading = ref(false)
++    const errorMessage = ref({})
++    const confirmSaveQtyDialogRef = ref()
++
++    const validateForm = () => {
++        const { transaction_type } = props
++
++        const commonFields = {
++            id: formData.value?.id || undefined,
++            warehouse: formData.value.warehouse?.id,
++            location: formData.value.location?.id,
++            item: formData.value.item,
++            item_uom: formData.value.item_uom?.id,
++            serial_file: formData.value.serial_file,
++            description: formData.value.description,
++            action: formData.value.id ? 'update' : 'create',
++            external_reference: props?.external_reference,
++            external_type: props.external_type ?? props.transaction_type,
++            total_cost: formData.value.total_cost ?? 0,
++            txn_dtl_object_id: formData.value?.txn_dtl_object_id,
++            txn_dtl_content_type: formData.value?.txn_dtl_content_type,
++            unit_cost_base_uom: formData.value?.unit_cost_base_uom,
++            unit_cost_uom: formData.value?.unit_cost_uom,
++        }
++
++        switch (transaction_type) {
++            case 'receipt':
++                return {
++                    ...commonFields,
++                    quantity: formData.value.quantity,
++                    cost: formData.value.cost,
++                }
++            case 'issue':
++                return {
++                    ...commonFields,
++                    quantity: formData.value.quantity,
++                    cost: formData.value.cost,
++                    price: formData.value.price,
++                    card_number_file: formData.value.card_number_file,
++                    available_qty_uom: formData.value.available_qty_uom,
++                    allow_negative: formData.value.allow_negative,
++                }
++            case 'transfer':
++                return {
++                    ...commonFields,
++                    quantity: formData.value.quantity,
++                    cost: formData.value.cost,
++                    from_warehouse: formData.value.from_warehouse?.id,
++                    from_location: formData.value.from_location?.id,
++                    to_warehouse: formData.value.to_warehouse?.id,
++                    to_location: formData.value.to_location?.id,
++                    issue: formData.value.issue,
++                }
++            case 'transfer_request':
++                return {
++                    ...commonFields,
++                    request_qty: formData.value.request_qty,
++                    from_warehouse: props.fromWarehouse?.id,
++                    to_warehouse: props.toWarehouse?.id,
++                }
++            case 'adjustment':
++                return {
++                    ...commonFields,
++                    adjust_type: formData.value.adjust_type,
++                    adjust_qty: formData.value.adjust_qty,
++                    adjust_cost: formData.value.adjust_cost,
++                    fifo_transaction: formData.value.fifo_transaction ?? undefined,
++                }
++            default:
++                return {}
++        }
++    }
++
++    const uploadSelectedSerials = async () => {
++        if (!isItemHasSerial.value || props.transaction_type == 'transfer_request' || !len(selectedSerial.value)) return
++
++        let formFile = new FormData()
++        const serials =
++            typeof selectedSerial.value[0] === 'string'
++                ? selectedSerial.value
++                : selectedSerial.value.map(serialItem => serialItem.serial)
++
++        formFile.append('file', new File([JSON.stringify(serials)], 'item_serial.json', { type: 'application/json' }))
++        formFile.append('ref_type', 'inventory')
++        formFile.append('hr_employee', props.employee)
++
++        const res = await fileServices.create(formFile)
++        formData.value.serial_file = res.data[0].id
++
++        if (!hasCardNumber.value) return
++
++        formFile = new FormData()
++        formFile.append(
++            'file',
++            new File([JSON.stringify([...selectedSerial.value])], 'item_serial_cards.json', {
++                type: 'application/json',
++            })
++        )
++        formFile.append('ref_type', 'inventory')
++        formFile.append('hr_employee', props.employee)
++
++        const cardNumberRes = await fileServices.create(formFile)
++        formData.value.card_number_file = cardNumberRes.data[0].id
++    }
++
++    const onSave = async () => {
++        try {
++            saveLoading.value = true
++            activeTab.value = 'detail'
++            await uploadSelectedSerials()
++
++            await itemSerial
++                .validateForm(props.transaction_type, validateForm())
++                .then(() => {
++                    isWrongTemplate.value = false
++                    errorSerial.value = ''
++                    store.isOpenDialog = false
++                    emit('onSave', props.transaction_type, formData.value)
++                    emptyFormdata()
++                    errorMessage.value = {}
++                    activeTab.value = 'detail'
++                })
++                .catch(error => {
++                    errorMessage.value = error?.response?.data?.error?.form_errors
++                })
++
++            if (
++                (isSelectedSerial.value && !len(selectedSerial.value)) ||
++                (isItemHasSerial.value && !len(dataUpload.value))
++            ) {
++                if (props.transaction_type !== 'transfer_request') {
++                    isWrongTemplate.value = true
++                    errorSerial.value = "Item serial can't be empty."
++                    activeTab.value = 'serial_item'
++                }
++            }
++        } catch (error) {
++            saveLoading.value = false
++        } finally {
++            saveLoading.value = false
++        }
++    }
++
++    const onConfirmQuantity = async (): Promise<void> => {
++        if (formData.value.quantity && localAvailableQty.value) {
++            if (props.transaction_type === 'issue' && formData.value.quantity > localAvailableQty.value) {
++                const isConfirm = await confirmSaveQtyDialogRef.value?.open(
++                    'Confirm Save Item',
++                    t(
++                        formData.value.allow_negative
++                            ? 'inventory.confirm_over_quantity'
++                            : 'inventory.confirm_quantity',
++                        { count: localAvailableQty.value }
++                    )
++                )
++
++                if (!isConfirm) return
++                if (!formData.value.allow_negative) formData.value.quantity = localAvailableQty.value
++            }
++        }
++        await onSave()
++    }
++
++    return {
++        saveLoading,
++        errorMessage,
++        confirmSaveQtyDialogRef,
++        validateForm,
++        onConfirmQuantity,
++        onSave,
++    }
++}
+-- 
+2.50.1.windows.1
+
