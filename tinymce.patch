@@ -1,0 +1,174 @@
+diff --git forkSrcPrefix/src/components/Form/TinyMce.vue forkDstPrefix/src/components/Form/TinyMce.vue
+index 7fb275e8c78c8d2f48cb522753746cea3c120c44..596dd2bfebaaab866c1320d85d8b28d69ff8c9ff 100644
+--- forkSrcPrefix/src/components/Form/TinyMce.vue
++++ forkDstPrefix/src/components/Form/TinyMce.vue
+@@ -10,6 +10,7 @@
+     import { useHead } from '@vueuse/head'
+     import { baseFieldStore } from '@/stores/base-field'
+     import { useI18n } from 'vue-i18n'
++    import { fileServices } from '@/atom/base/base.apis'
+ 
+     const { t } = useI18n()
+ 
+@@ -108,6 +109,100 @@
+         `,
+     }))
+ 
++    const getS3UploadUrl = (response: any) => {
++        const uploadedFile = Array.isArray(response?.data?.file) ? response.data.file[0] : response?.data?.file
++
++        return uploadedFile?.url
++    }
++
++    const uploadToS3 = async (file: Blob, fileName?: string) => {
++        const formData = new FormData()
++
++        formData.append('file', file, fileName || 'editor-image')
++        formData.append('response_type', 'full')
++
++        const response = await fileServices.uploadS3(formData)
++        const url = getS3UploadUrl(response)
++
++        if (!url) {
++            throw new Error('Image upload failed: missing uploaded file URL')
++        }
++
++        return url
++    }
++
++    const uploadImageToS3 = async (blobInfo: any) => {
++        return uploadToS3(blobInfo.blob(), blobInfo.filename?.())
++    }
++
++    const pickImageAndUploadToS3 = (callback: (url: string, meta?: Record<string, string>) => void) => {
++        const input = document.createElement('input')
++
++        input.type = 'file'
++        input.accept = 'image/*'
++        input.onchange = async () => {
++            const file = input.files?.[0]
++
++            if (!file) return
++
++            const url = await uploadToS3(file, file.name)
++
++            callback(url, {
++                title: file.name,
++                alt: file.name,
++            })
++        }
++
++        input.click()
++    }
++
++    const escapeHtmlAttribute = (value = '') => {
++        return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
++    }
++
++    const insertImage = (editor: any, url: string, alt = '') => {
++        editor.insertContent(
++            `<img src="${escapeHtmlAttribute(url)}" alt="${escapeHtmlAttribute(alt)}" crossorigin="anonymous">`
++        )
++    }
++
++    const pickImageAndInsertToEditor = (editor: any) => {
++        pickImageAndUploadToS3((url, meta) => {
++            insertImage(editor, url, meta?.alt)
++        })
++    }
++
++    const getImageFiles = (fileList?: FileList | null) => {
++        if (!fileList) return []
++
++        return Array.from(fileList).filter(file => file.type.startsWith('image/'))
++    }
++
++    const getClipboardImageFiles = (clipboardData?: DataTransfer | null) => {
++        const files = getImageFiles(clipboardData?.files)
++
++        if (files.length || !clipboardData?.items) return files
++
++        return Array.from(clipboardData.items)
++            .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
++            .map(item => item.getAsFile())
++            .filter((file): file is File => !!file)
++    }
++
++    const uploadAndInsertImages = async (editor: any, files: File[]) => {
++        for (const file of files) {
++            const url = await uploadToS3(file, file.name)
++
++            insertImage(editor, url, file.name)
++        }
++    }
++
++    const setAnonymousCrossOrigin = (root: any) => {
++        root?.querySelectorAll('img').forEach(img => {
++            img.setAttribute('crossorigin', 'anonymous')
++        })
++    }
++
+     const opt = ref({
+         menubar: props.menubar,
+         height: !props.autoResize && props.height,
+@@ -115,6 +210,12 @@
+ 
+         plugins: props.autoResize ? plugins.concat(' autoresize') : plugins,
+         toolbar,
++        menu: {
++            insert: {
++                title: 'Insert',
++                items: 's3image link media template codesample inserttable charmap emoticons pagebreak nonbreaking anchor insertdatetime',
++            },
++        },
+ 
+         tinycomments_mode: 'embedded',
+         tinycomments_author: currentAuthor,
+@@ -132,8 +233,46 @@
+         link_context_toolbar: true,
+         lists_indent_on_tab: true,
+         fullscreen_native: true,
++        automatic_uploads: true,
++        paste_data_images: true,
++        images_upload_handler: uploadImageToS3,
++        extended_valid_elements:
++            'img[class|src|alt|title|width|height|style|loading|decoding|srcset|sizes|crossorigin]',
++        setup: (editor: any) => {
++            const syncImageCrossOrigin = () => {
++                setAnonymousCrossOrigin(editor.getBody())
++            }
++
++            editor.ui.registry.addMenuItem('s3image', {
++                icon: 'image',
++                text: 'Image',
++                onAction: () => {
++                    pickImageAndInsertToEditor(editor)
++                },
++            })
++            editor.on('SetContent NodeChange ExecCommand ObjectResized', syncImageCrossOrigin)
++            editor.on('PreProcess', (event: any) => {
++                setAnonymousCrossOrigin(event.node)
++            })
++            editor.on('Paste', (event: ClipboardEvent) => {
++                const files = getClipboardImageFiles(event.clipboardData)
++
++                if (!files.length) return
++
++                event.preventDefault()
++                uploadAndInsertImages(editor, files)
++            })
++            editor.on('Drop', (event: DragEvent) => {
++                const files = getImageFiles(event.dataTransfer?.files)
++
++                if (!files.length) return
++
++                event.preventDefault()
++                uploadAndInsertImages(editor, files)
++            })
++        },
+ 
+-        quickbars_image_toolbar: 'alignleft aligncenter alignright | rotateleft rotateright',
++        quickbars_image_toolbar: 'alignleft aligncenter alignright',
+         quickbars_insert_toolbar: 'bold italic underline | bullist numlist | quicklink quickimage',
+         quickbars_selection_toolbar: 'bold italic underline | bullist numlist | quicklink quickimage',
+ 
