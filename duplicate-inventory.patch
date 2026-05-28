@@ -1,0 +1,999 @@
+diff --git forkSrcPrefix/src/modules/inventory/views/transaction/issue/form.vue forkDstPrefix/src/modules/inventory/views/transaction/issue/form.vue
+index 8d6f9bb96c9b49826166d75de7b19155a2a7c2d4..b64bbac8ae71e232e5440c771fdcc4d66c242fcf 100644
+--- forkSrcPrefix/src/modules/inventory/views/transaction/issue/form.vue
++++ forkDstPrefix/src/modules/inventory/views/transaction/issue/form.vue
+@@ -305,6 +305,11 @@
+     const route = useRoute()
+     const formKey = ref(0)
+     const isLoadingInventory = ref(false)
++    const duplicateIssueKey = 'inventoryIssueDuplicateId'
++    const isDuplicatingIssue = ref(false)
++    type DuplicateOptions = {
++        duplicate?: boolean
++    }
+ 
+     const params = ref({
+         page: 1,
+@@ -366,7 +371,9 @@
+     const searchResult = search => {
+         params.value.search = search
+         params.value.page = 1
+-        getInventoryByIssue(storeIssue.formData?.id)
++        getInventoryByIssue(inventoryID.value || storeIssue.formData?.id, {
++            duplicate: isDuplicatingIssue.value,
++        })
+     }
+ 
+     const tabMenu = storeIssue.tabItems[route.meta.value]
+@@ -415,7 +422,12 @@
+ 
+     const inventoryID = ref('')
+ 
+-    const onRead = async data => {
++    const isDirectIssue = data => {
++        return object.isEmpty(data?.external_reference)
++    }
++
++    const onRead = async (data, options: DuplicateOptions = {}) => {
++        const isDuplicate = options?.duplicate === true
+         const {
+             id,
+             reference_no,
+@@ -430,28 +442,52 @@
+             transaction_type,
+             external_reference,
+         } = data
++        const transactionDate = isDuplicate ? format(new Date(), dateFormat) : transaction_date
++        const employeeId = isDuplicate ? store.employee.hr_employee : hr_employee?.id
++        const employeeInfo = isDuplicate ? store.employee.employee_info : hr_employee
++
+         storeIssue.formData = {
+-            id,
+-            reference_no,
++            id: isDuplicate ? undefined : id,
++            reference_no: isDuplicate ? undefined : reference_no,
+             movement_type: movement_type.id,
+             movement_type_info: movement_type,
+-            transaction_date: transaction_date,
++            transaction_date: transactionDate,
+             description,
+-            hr_employee: hr_employee?.id,
+-            hr_employee_info: hr_employee,
+-            financial_period: financial_period.id,
+-            financial_period_info: financial_period.period_title,
++            hr_employee: employeeId,
++            hr_employee_info: employeeInfo,
++            financial_period: isDuplicate ? null : financial_period.id,
++            financial_period_info: isDuplicate ? '' : financial_period.period_title,
+             external_type,
+             transaction_type,
+-            external_reference,
++            external_reference: isDuplicate ? null : external_reference,
+         }
+         inventoryID.value = data.id
+-        await getInventoryByIssue(data.id)
++        await getInventoryByIssue(data.id, { duplicate: isDuplicate })
+         storeIssue.external_type = data?.external_type
+-        if (data?.external_reference != null && data?.external_reference != '') {
++        if (!isDuplicate && data?.external_reference != null && data?.external_reference != '') {
+             storeIssue.is_disabled = true
+             storeIssue.formData.isDisable = true
+         }
++
++        if (isDuplicate) {
++            await getFinancePeriod()
++            storeSummaryData.state = ''
++            storeSummaryData.create_date = ''
++            storeSummaryData.create_by = ''
++            storeSummaryData.ref = ''
++            storeSummaryData.external_ref = ''
++            storeSummaryData.external_transaction = {}
++            storeSummaryData.transaction_date = transactionDate
++            storeSummaryData.write_date = ''
++            storeSummaryData.total_amount = data?.total_amount
++            storeSummaryData.total_cost = data?.total_cost
++            storeSummaryData.employee.hr_employee_onbehalf = employeeInfo
++            storeSummaryData.employee.employee_info = employeeInfo
++            storeSummaryData.approvalWorkflow = []
++            storeSummaryData.workflowAccess = []
++            return
++        }
++
+         storeSummaryData.status = status
+         storeSummaryData.state = state
+         storeSummaryData.create_date = data.display_create_date
+@@ -467,18 +503,21 @@
+         storeSummaryData.employee.employee_info = hr_employee
+     }
+ 
+-    const getInventoryByIssue = async id => {
++    const getInventoryByIssue = async (id, options: DuplicateOptions = {}) => {
++        if (!id) return
++        const isDuplicate = options?.duplicate === true
+         isLoadingInventory.value = true
+         try {
+-            const res = await ApiService.getInventoryByIdIssue(id, params.value)
+-            const data = res.data.results
++            const res = await ApiService.getInventoryByIdIssue(id, {
++                ...params.value,
++                paging: isDuplicate ? false : undefined,
++            })
++            const data = Array.isArray(res.data) ? res.data : res.data.results
+ 
+-            if (res.data.next == null) {
+-                ispaginate.value = false
+-            }
++            ispaginate.value = !isDuplicate && res.data.next !== null
+ 
+             const formatInventoryData = data.map(item => ({
+-                id: item?.id,
++                id: isDuplicate ? undefined : item?.id,
+                 warehouse: item.warehouse.id,
+                 warehouse_info: item.warehouse,
+                 location: item.location.id,
+@@ -493,15 +532,15 @@
+                 item_info: item.item,
+                 item_uom: item.item_uom.id,
+                 item_uom_info: item.item_uom,
+-                serial_file: item?.serial_file?.id,
+-                card_number_file: item.card_number_file?.id,
++                serial_file: isDuplicate ? undefined : item?.serial_file?.id,
++                card_number_file: isDuplicate ? undefined : item.card_number_file?.id,
+                 isVariant: item?.item?.is_variant,
+                 is_track_serial: item?.item?.is_track_serial,
+                 require_serial: item?.item?.require_serial,
+-                action: 'update',
++                action: isDuplicate ? 'create' : 'update',
+                 total_cost: item?.total_cost,
+-                txn_dtl_content_type: item.txn_dtl_content_type?.id,
+-                txn_dtl_object_id: item.txn_dtl_object_id,
++                txn_dtl_content_type: isDuplicate ? undefined : item.txn_dtl_content_type?.id,
++                txn_dtl_object_id: isDuplicate ? undefined : item.txn_dtl_object_id,
+             }))
+ 
+             if (params.value.page == 1) {
+@@ -509,16 +548,16 @@
+             } else if (params.value.page > 1) {
+                 storeIssue.formData.inventories.push(...formatInventoryData)
+             }
+-
+-            isLoadingInventory.value = false
+         } catch (err) {
+             console.log(err)
++        } finally {
++            isLoadingInventory.value = false
+         }
+     }
+ 
+     const onPagination = () => {
+         params.value.page++
+-        getInventoryByIssue(inventoryID.value)
++        getInventoryByIssue(inventoryID.value, { duplicate: isDuplicatingIssue.value })
+     }
+ 
+     const { approverRef } = useFormSetup()
+@@ -633,8 +672,23 @@
+         storeSummaryData.title_detail = 'Issue'
+         await storeSummaryData.onReadWorkflow(route.params?.id, CONTENT_TYPE.INVENTORY_ISSUE)
+ 
++        const duplicateStorage = onGetStorage(duplicateIssueKey)
++        if (!route.params?.id && duplicateStorage !== null) {
++            try {
++                const id = onReadStorage(duplicateStorage)
++                const { data } = await ApiService.read(id)
++                if (isDirectIssue(data)) {
++                    isDuplicatingIssue.value = true
++                    await onRead(data, { duplicate: true })
++                }
++            } finally {
++                onClearStorage(duplicateIssueKey)
++            }
++            return
++        }
++
+         const storage = onGetStorage(sessionKey)
+-        if (storage !== null) {
++        if (!route.params?.id && storage !== null) {
+             try {
+                 const data = onReadStorage(storage)
+                 await linkFrom({
+@@ -661,6 +715,7 @@
+     onBeforeUnmount(() => {
+         AxiosUtils.removeHeader('wdg-url-path')
+         onClearStorage(sessionKey)
++        onClearStorage(duplicateIssueKey)
+     })
+ </script>
+ 
+diff --git forkSrcPrefix/src/modules/inventory/views/transaction/issue/index.vue forkDstPrefix/src/modules/inventory/views/transaction/issue/index.vue
+index 52245c1cd4616e1ca1d24180dfc7c69e9f5e9910..40d01bf9125c651a692a341002e7ecc20b4cbb74 100644
+--- forkSrcPrefix/src/modules/inventory/views/transaction/issue/index.vue
++++ forkDstPrefix/src/modules/inventory/views/transaction/issue/index.vue
+@@ -4,7 +4,13 @@
+         name="inventoryIssue-table"
+         title="Issue"
+         :headers="activeTab?.headers"
+-        :action-items="[{ type: 'edit' }, { type: 'post' }, { type: 'revoke' }, { type: 'delete' }]"
++        :action-items="[
++            { type: 'edit' },
++            { type: 'duplicate' },
++            { type: 'post' },
++            { type: 'revoke' },
++            { type: 'delete' },
++        ]"
+         :action="action"
+         :api-service="ApiService"
+         :exportable="true"
+@@ -71,17 +77,22 @@
+             </div>
+         </template>
+ 
+-        <!-- Action -->
+-        <template #action="{ item }">
+-            <div v-if="shouldHideActionButton(item) && shouldHideActionPermissionButton(item)" />
++        <template #_action_edit="{ item, accessModel }">
++            <div v-if="!accessModel?.access_right?.update || item.status !== $consts.APPROVAL_STATUS.DRAFT" />
+         </template>
+ 
+-        <template #_action_edit="{ item }">
+-            <div v-if="!accessRight?.update || item.status == 'approved'" />
++        <template #_action_delete="{ item, accessModel }">
++            <div v-if="!accessModel?.access_right?.delete || item.status !== $consts.APPROVAL_STATUS.DRAFT" />
+         </template>
+ 
+-        <template #_action_delete="{ item }">
+-            <div v-if="!accessRight?.delete || item.status == 'approved'" />
++        <template #_action_duplicate="{ item }">
++            <base-action-item
++                v-if="canDuplicateIssue(item)"
++                color="amber-darken-1"
++                icon="prime-clone"
++                title="Duplicate"
++                @click="onDuplicateItem(item)"
++            />
+         </template>
+ 
+         <template #_action_post="{ item, reload }">
+@@ -136,7 +147,6 @@
+     import { ref, onUnmounted, onBeforeMount, computed } from 'vue'
+     import { InventoryIssue, InventoryState } from '@@/inventory/services/transaction.service'
+     import { useInventoryTransaction, useInventoryTransactionIssue } from '@@/inventory/store/transaction.store'
+-    import { useAppStore } from '@/atom/app/app.stores'
+     import { useRoute, useRouter } from 'vue-router'
+     import { useCustomToast } from '@/composables/useCustomToast'
+     import { POSITION, TYPE } from 'vue-toastification'
+@@ -155,12 +165,12 @@
+     const actionOnState = new InventoryState()
+     const store = useInventoryTransaction()
+     const IssueStore = useInventoryTransactionIssue()
+-    const appStore = useAppStore()
+     const route = useRoute()
+     const router = useRouter()
+ 
+     const children = getMenuTabs(URL_PATH.INVENTORY, [URL_PATH.TRANSACTIONS, URL_PATH.ISSUES])
+     const activeTab = IssueStore.tabItems[route.meta.value]
++    const duplicateIssueKey = 'inventoryIssueDuplicateId'
+ 
+     // method
+     const onView = async data => {
+@@ -172,6 +182,20 @@
+         }
+     }
+ 
++    const canDuplicateIssue = item => {
++        return object.isEmpty(item?.external_reference)
++    }
++
++    const onDuplicateItem = async item => {
++        const { onSetStorage } = object.useStorage()
++        onSetStorage(duplicateIssueKey, item.id)
++        const createRoute = router.resolve({
++            name: `${activeTab?.routeGroup}.create`,
++        })
++
++        await router.push(createRoute)
++    }
++
+     const viewDetailData = computed(() => ({
+         header: {
+             details: [
+@@ -227,24 +251,6 @@
+         },
+     }))
+ 
+-    const accessRight = computed(() => {
+-        if (typeof appStore.modelAccessRight == 'string') {
+-            return {
+-                update: true,
+-                view: true,
+-                delete: true,
+-            }
+-        }
+-        const access = appStore.modelAccessRight.find(({ model = '' }) => model == CONTENT_TYPE.INVENTORY_ISSUE)
+-
+-        return access?.access_right ?? {}
+-    })
+-
+-    const shouldHideActionButton = item => {
+-        const disabledStatuses = ['revised', 'draft']
+-        return !disabledStatuses.includes(item.status) || !(accessRight.value?.update || accessRight.value?.delete)
+-    }
+-
+     const action = ref(true)
+ 
+     const onAction = async (type, id, state: TState, reload) => {
+@@ -294,9 +300,6 @@
+ 
+     const issueAction = actionPermission(URL_PATH.ISSUES)
+     const { canPost, canRevoke } = issueAction
+-    const shouldHideActionPermissionButton = item => {
+-        return item.status != 'approved' || item.state != 'open' || (!canPost && !canRevoke)
+-    }
+     onUnmounted(() => store.toDefault())
+     onBeforeMount(() => {
+         store.resetState()
+diff --git forkSrcPrefix/src/modules/inventory/views/transaction/receipt/form.vue forkDstPrefix/src/modules/inventory/views/transaction/receipt/form.vue
+index 3d39f49f9d1d19310fb4b42371b357604e124508..57cdcce60a8aae20a871f887d51dbf1442c79aad 100644
+--- forkSrcPrefix/src/modules/inventory/views/transaction/receipt/form.vue
++++ forkDstPrefix/src/modules/inventory/views/transaction/receipt/form.vue
+@@ -251,7 +251,7 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { ref, onMounted, onBeforeMount, provide, onBeforeUnmount } from 'vue'
++    import { ref, onMounted, onBeforeMount, provide, onBeforeUnmount, computed } from 'vue'
+     import { InventoryReceipt, InventoryState } from '@@/inventory/services/transaction.service'
+     import {
+         useInventoryTransaction,
+@@ -292,6 +292,11 @@
+     const activeTab = ref('')
+     const route = useRoute()
+     const formKey = ref(0)
++    const duplicateReceiptKey = 'inventoryReceiptDuplicateId'
++    const isDuplicatingReceipt = ref(false)
++    type DuplicateOptions = {
++        duplicate?: boolean
++    }
+     const headers = [
+         {
+             text: 'Reference ID',
+@@ -389,7 +394,12 @@
+     const reading = () => {
+         stepperLoading.value = true
+     }
+-    const onRead = async data => {
++    const isDirectReceipt = data => {
++        return object.isEmpty(data?.external_reference)
++    }
++
++    const onRead = async (data, options: DuplicateOptions = {}) => {
++        const isDuplicate = options?.duplicate === true
+         const {
+             id,
+             reference_no,
+@@ -403,35 +413,60 @@
+             external_type,
+             transaction_type,
+             external_reference,
+-            references,
++            references = [],
+         } = data
++        const transactionDate = isDuplicate ? format(new Date(), dateFormat) : transaction_date
++        const employeeId = isDuplicate ? store.employee.hr_employee : hr_employee?.id
++        const employeeInfo = isDuplicate ? store.employee.employee_info : hr_employee
++
+         storeReceipt.formData = {
+-            id,
+-            reference_no,
++            id: isDuplicate ? undefined : id,
++            reference_no: isDuplicate ? undefined : reference_no,
+             movement_type: movement_type.id,
+             movement_type_info: movement_type,
+-            transaction_date: transaction_date,
++            transaction_date: transactionDate,
+             description,
+-            hr_employee: hr_employee?.id,
+-            hr_employee_info: hr_employee,
+-            financial_period: financial_period.id,
+-            financial_period_info: financial_period.period_title,
++            hr_employee: employeeId,
++            hr_employee_info: employeeInfo,
++            financial_period: isDuplicate ? null : financial_period?.id,
++            financial_period_info: isDuplicate ? '' : financial_period?.period_title,
+             external_type,
+             transaction_type,
+-            external_reference,
+-            references: references.map(r => ({
+-                object_id: r.object_id,
+-                content_type: r.content_type?.id,
+-            })),
+-            issues: references.flatMap(r => r.issue),
++            external_reference: isDuplicate ? null : external_reference,
++            references: isDuplicate
++                ? []
++                : references.map(r => ({
++                      object_id: r.object_id,
++                      content_type: r.content_type?.id,
++                  })),
++            issues: isDuplicate ? [] : references.flatMap(r => r.issue),
+         }
+         inventoryID.value = data.id
+-        await getInventoryByReceipt(data.id)
++        await getInventoryByReceipt(data.id, { duplicate: isDuplicate })
+         stepperLoading.value = false
+         // store.external_reference = external_reference
+-        if (data?.external_reference != null && data?.external_reference !== '') {
++        if (!isDuplicate && data?.external_reference != null && data?.external_reference !== '') {
+             storeReceipt.is_disabled = true
+         }
++
++        if (isDuplicate) {
++            await getFinancePeriod()
++            storeSummaryData.state = ''
++            storeSummaryData.create_date = ''
++            storeSummaryData.create_by = ''
++            storeSummaryData.ref = ''
++            storeSummaryData.external_ref = ''
++            storeSummaryData.external_transaction = {}
++            storeSummaryData.transaction_date = transactionDate
++            storeSummaryData.write_date = ''
++            storeSummaryData.total_cost = data?.total_cost
++            storeSummaryData.employee.hr_employee_onbehalf = employeeInfo
++            storeSummaryData.employee.employee_info = employeeInfo
++            storeSummaryData.approvalWorkflow = []
++            storeSummaryData.workflowAccess = []
++            return
++        }
++
+         storeSummaryData.status = status
+         storeSummaryData.state = state
+         storeSummaryData.create_date = data.display_create_date
+@@ -457,20 +492,25 @@
+     const searchResult = search => {
+         params.value.search = search
+         params.value.page = 1
+-        getInventoryByReceipt(storeReceipt.formData?.id)
++        getInventoryByReceipt(inventoryID.value || storeReceipt.formData?.id, {
++            duplicate: isDuplicatingReceipt.value,
++        })
+     }
+-    const getInventoryByReceipt = async id => {
++    const getInventoryByReceipt = async (id, options: DuplicateOptions = {}) => {
++        if (!id) return
++        const isDuplicate = options?.duplicate === true
+         isLoadingInventory.value = true
+         try {
+-            const res = await ApiService.getInventoryByIdReceipt(id, params.value)
+-            const data = res.data.results
++            const res = await ApiService.getInventoryByIdReceipt(id, {
++                ...params.value,
++                paging: isDuplicate ? false : undefined,
++            })
++            const data = Array.isArray(res.data) ? res.data : res.data.results
+ 
+-            if (res.data.next == null) {
+-                ispaginate.value = false
+-            }
++            ispaginate.value = !isDuplicate && res.data.next !== null
+ 
+             const formatInventoryData = data.map(item => ({
+-                id: item?.id,
++                id: isDuplicate ? undefined : item?.id,
+                 warehouse: item.warehouse.id,
+                 warehouse_info: item.warehouse,
+                 location: item.location.id,
+@@ -484,16 +524,16 @@
+                 item_info: item.item,
+                 item_uom: item.item_uom.id,
+                 item_uom_info: item.item_uom,
+-                serial_file: item?.serial_file?.id,
++                serial_file: isDuplicate ? undefined : item?.serial_file?.id,
+                 isVariant: item?.item?.is_variant,
+                 is_track_serial: item?.item?.is_track_serial,
+                 require_serial: item?.item?.require_serial,
+-                action: 'update',
++                action: isDuplicate ? 'create' : 'update',
+                 total_cost: item?.total_cost,
+-                issue: item?.issue?.id,
+-                issue_info: item?.issue,
+-                txn_dtl_content_type: item.txn_dtl_content_type?.id,
+-                txn_dtl_object_id: item.txn_dtl_object_id,
++                issue: isDuplicate ? undefined : item?.issue?.id,
++                issue_info: isDuplicate ? undefined : item?.issue,
++                txn_dtl_content_type: isDuplicate ? undefined : item.txn_dtl_content_type?.id,
++                txn_dtl_object_id: isDuplicate ? undefined : item.txn_dtl_object_id,
+                 from_location_info: item.from_location,
+                 from_warehouse_info: item.from_warehouse,
+             }))
+@@ -503,16 +543,16 @@
+             } else if (params.value.page > 1) {
+                 storeReceipt.formData.inventories.push(...formatInventoryData)
+             }
+-
+-            isLoadingInventory.value = false
+         } catch (err) {
+             console.log(err)
++        } finally {
++            isLoadingInventory.value = false
+         }
+     }
+ 
+     const onPagination = () => {
+         params.value.page++
+-        getInventoryByReceipt(inventoryID.value)
++        getInventoryByReceipt(inventoryID.value, { duplicate: isDuplicatingReceipt.value })
+     }
+ 
+     const { approverRef } = useFormSetup()
+@@ -610,8 +650,24 @@
+         window.addEventListener('beforeunload', handleBeforeUnload)
+         storeSummaryData.title_detail = 'Receipt'
+         await storeSummaryData.onReadWorkflow(route.params?.id, CONTENT_TYPE.INVENTORY_RECEIPT)
++
++        const duplicateStorage = onGetStorage(duplicateReceiptKey)
++        if (!route.params?.id && duplicateStorage !== null) {
++            try {
++                const id = onReadStorage(duplicateStorage)
++                const { data } = await ApiService.read(id)
++                if (isDirectReceipt(data)) {
++                    isDuplicatingReceipt.value = true
++                    await onRead(data, { duplicate: true })
++                }
++            } finally {
++                onClearStorage(duplicateReceiptKey)
++            }
++            return
++        }
++
+         const storage = onGetStorage(sessionKey)
+-        if (storage !== null) {
++        if (!route.params?.id && storage !== null) {
+             try {
+                 const data = onReadStorage(storage)
+                 await linkFrom({
+@@ -639,6 +695,7 @@
+     onBeforeUnmount(() => {
+         AxiosUtils.removeHeader('wdg-url-path')
+         onClearStorage(sessionKey)
++        onClearStorage(duplicateReceiptKey)
+     })
+ </script>
+ <style scoped></style>
+diff --git forkSrcPrefix/src/modules/inventory/views/transaction/receipt/index.vue forkDstPrefix/src/modules/inventory/views/transaction/receipt/index.vue
+index 551a26863dc64a4fc914479ca6039a2f18d21d10..92273535f4d6df54661432fcf235fce3b543a107 100644
+--- forkSrcPrefix/src/modules/inventory/views/transaction/receipt/index.vue
++++ forkDstPrefix/src/modules/inventory/views/transaction/receipt/index.vue
+@@ -4,7 +4,14 @@
+         name="inventoryReceipt-table"
+         title="Receipt"
+         :headers="activeTab?.headers"
+-        :action-items="[{ type: 'edit' }, { type: 'post' }, { type: 'revoke' }, { type: 'delete' }]"
++        :action-items="[
++            { type: 'edit' },
++            { type: 'duplicate' },
++            { type: 'post' },
++            { type: 'revoke' },
++            { type: 'delete' },
++        ]"
++        :action="action"
+         :api-service="ApiService"
+         :exportable="true"
+         :get-service-key="activeTab?.getServiceKey"
+@@ -70,17 +77,22 @@
+             </div>
+         </template>
+ 
+-        <!-- Action -->
+-        <template #action="{ item }">
+-            <div v-if="shouldHideActionButton(item) && shouldHideActionPermissionButton(item)" />
++        <template #_action_edit="{ item, accessModel }">
++            <div v-if="!accessModel?.access_right?.update || item.status !== $consts.APPROVAL_STATUS.DRAFT" />
+         </template>
+ 
+-        <template #_action_edit="{ item }">
+-            <div v-if="!accessRight?.update || item.status !== 'draft'" />
++        <template #_action_delete="{ item, accessModel }">
++            <div v-if="!accessModel?.access_right?.delete || item.status !== $consts.APPROVAL_STATUS.DRAFT" />
+         </template>
+ 
+-        <template #_action_delete="{ item }">
+-            <div v-if="!accessRight?.delete || item.status !== 'draft'" />
++        <template #_action_duplicate="{ item }">
++            <base-action-item
++                v-if="canDuplicateReceipt(item)"
++                color="amber-darken-1"
++                icon="prime-clone"
++                title="Duplicate"
++                @click="onDuplicateItem(item)"
++            />
+         </template>
+ 
+         <template #_action_post="{ item, reload }">
+@@ -134,9 +146,7 @@
+     import { ref, onUnmounted, onBeforeMount, computed } from 'vue'
+     import { InventoryReceipt, InventoryState } from '@@/inventory/services/transaction.service.ts'
+     import { useInventoryTransaction, useInventoryTransactionReceipt } from '@@/inventory/store/transaction.store'
+-    import { useAppStore } from '@/atom/app/app.stores'
+     import { useRoute, useRouter } from 'vue-router'
+-    import { mapper } from '@/utils/map'
+     import { useCustomToast } from '@/composables/useCustomToast'
+     import { POSITION, TYPE } from 'vue-toastification'
+     import i18n from '@/plugins/i18n'
+@@ -153,10 +163,11 @@
+     const actionOnState = new InventoryState()
+     const store = useInventoryTransaction()
+     const storeReceipt = useInventoryTransactionReceipt()
+-    const appStore = useAppStore()
+     const route = useRoute()
+     const router = useRouter()
+     const children = getMenuTabs(URL_PATH.INVENTORY, [URL_PATH.TRANSACTIONS, URL_PATH.RECEIPT])
++    const activeTab = storeReceipt.tabItems[route.meta.value]
++    const duplicateReceiptKey = 'inventoryReceiptDuplicateId'
+ 
+     // method
+     const onView = async data => {
+@@ -168,6 +179,20 @@
+         }
+     }
+ 
++    const canDuplicateReceipt = item => {
++        return object.isEmpty(item?.external_reference)
++    }
++
++    const onDuplicateItem = async item => {
++        const { onSetStorage } = object.useStorage()
++        onSetStorage(duplicateReceiptKey, item.id)
++        const createRoute = router.resolve({
++            name: `${activeTab?.routeGroup}.create`,
++        })
++
++        await router.push(createRoute)
++    }
++
+     const viewDetailData = computed(() => ({
+         header: {
+             details: [
+@@ -257,24 +282,6 @@
+         }
+     }
+ 
+-    const activeTab = storeReceipt.tabItems[route.meta.value]
+-    const accessRight = computed(() => {
+-        if (typeof appStore.modelAccessRight == 'string') {
+-            return {
+-                update: true,
+-                view: true,
+-                delete: true,
+-            }
+-        }
+-        const access = appStore.modelAccessRight.find(({ model = '' }) => model == CONTENT_TYPE.INVENTORY_RECEIPT)
+-
+-        return access?.access_right ?? {}
+-    })
+-    const shouldHideActionButton = item => {
+-        const disabledStatuses = ['revised', 'draft']
+-        return !disabledStatuses.includes(item.status) || !(accessRight.value?.update || accessRight.value?.delete)
+-    }
+-
+     const inventoryReceiptTable = ref()
+     const onReloadTable = () => {
+         inventoryReceiptTable.value?.reload()
+@@ -282,9 +289,6 @@
+ 
+     const receiptAction = actionPermission(URL_PATH.RECEIPT)
+     const { canPost, canRevoke } = receiptAction
+-    const shouldHideActionPermissionButton = item => {
+-        return item.status != 'approved' || item.state != 'open' || (!canPost && !canRevoke)
+-    }
+     onUnmounted(() => store.toDefault())
+     onBeforeMount(() => {
+         store.resetState()
+diff --git forkSrcPrefix/src/modules/inventory/views/transaction/transfer/form.vue forkDstPrefix/src/modules/inventory/views/transaction/transfer/form.vue
+index 76af5ab27e9192dab74eb69b0219fc0c8560b8af..8d973bc7156f4b3563571d2bc797d68d4a14f5d0 100644
+--- forkSrcPrefix/src/modules/inventory/views/transaction/transfer/form.vue
++++ forkDstPrefix/src/modules/inventory/views/transaction/transfer/form.vue
+@@ -346,6 +346,11 @@
+     const route = useRoute()
+     const tabMenu = storeTransfer.tabItems[route.meta.value]
+     const formKey = ref(0)
++    const duplicateTransferKey = 'inventoryTransferDuplicateId'
++    const isDuplicatingTransfer = ref(false)
++    type DuplicateOptions = {
++        duplicate?: boolean
++    }
+ 
+     const selectData = data => {
+         if (data) {
+@@ -368,7 +373,9 @@
+     const searchResult = search => {
+         params.value.search = search
+         params.value.page = 1
+-        getInventoryByTransfer(storeTransfer.formData?.id)
++        getInventoryByTransfer(inventoryID.value || storeTransfer.formData?.id, {
++            duplicate: isDuplicatingTransfer.value,
++        })
+     }
+ 
+     const transferData = (type, data) => {
+@@ -411,7 +418,8 @@
+ 
+     const inventoryID = ref('')
+ 
+-    const onRead = async data => {
++    const onRead = async (data, options: DuplicateOptions = {}) => {
++        const isDuplicate = options?.duplicate === true
+         const {
+             id,
+             reference_no,
+@@ -425,21 +433,42 @@
+             external_type,
+             transaction_type,
+         } = data
++        const transactionDate = isDuplicate ? format(new Date(), dateFormat) : transaction_date
++        const employeeId = isDuplicate ? store.employee.hr_employee : hr_employee?.id
++        const employeeInfo = isDuplicate ? store.employee.employee_info : hr_employee
++
+         storeTransfer.formData = {
+-            id,
+-            reference_no,
+-            transaction_date: transaction_date,
++            id: isDuplicate ? undefined : id,
++            reference_no: isDuplicate ? undefined : reference_no,
++            transaction_date: transactionDate,
+             description,
+-            hr_employee: hr_employee?.id,
+-            hr_employee_info: hr_employee,
+-            financial_period: financial_period.id,
+-            financial_period_info: financial_period.period_title,
++            hr_employee: employeeId,
++            hr_employee_info: employeeInfo,
++            financial_period: isDuplicate ? null : financial_period.id,
++            financial_period_info: isDuplicate ? '' : financial_period.period_title,
+             transfer_type,
+             external_type,
+             transaction_type,
+         }
+         inventoryID.value = data.id
+-        await getInventoryByTransfer(data.id)
++        await getInventoryByTransfer(data.id, { duplicate: isDuplicate })
++
++        if (isDuplicate) {
++            await getFinancePeriod()
++            storeSummaryData.state = ''
++            storeSummaryData.create_date = ''
++            storeSummaryData.create_by = ''
++            storeSummaryData.ref = ''
++            storeSummaryData.transaction_date = transactionDate
++            storeSummaryData.write_date = ''
++            storeSummaryData.total_cost = data?.total_cost
++            storeSummaryData.employee.hr_employee_onbehalf = employeeInfo
++            storeSummaryData.employee.employee_info = employeeInfo
++            storeSummaryData.approvalWorkflow = []
++            storeSummaryData.workflowAccess = []
++            return
++        }
++
+         storeSummaryData.status = status
+         storeSummaryData.state = state
+         storeSummaryData.create_date = data.display_create_date
+@@ -459,19 +488,24 @@
+         search: '',
+     })
+     const ispaginate = ref(true)
+-    const getInventoryByTransfer = async id => {
++    const getInventoryByTransfer = async (id, options: DuplicateOptions = {}) => {
++        if (!id) return
++        const isDuplicate = options?.duplicate === true
+         isLoadingInventory.value = true
+         try {
+             if (params.value.page <= 0) {
+                 params.value.page = 1
+             }
+-            const res = await ApiService.getInventoryByIdTransfer(id, params.value)
+-            const data = res.data.results
++            const res = await ApiService.getInventoryByIdTransfer(id, {
++                ...params.value,
++                paging: isDuplicate ? false : undefined,
++            })
++            const data = Array.isArray(res.data) ? res.data : res.data.results
+ 
+-            ispaginate.value = res.data.next !== null
++            ispaginate.value = !isDuplicate && res.data.next !== null
+ 
+             const formatInventoryData = data.map(item => ({
+-                id: item?.id,
++                id: isDuplicate ? undefined : item?.id,
+                 from_warehouse: item?.from_warehouse?.id,
+                 from_warehouse_info: item?.from_warehouse,
+                 to_warehouse: item?.to_warehouse?.id,
+@@ -491,11 +525,11 @@
+                 item_info: item.item,
+                 item_uom: item.item_uom.id,
+                 item_uom_info: item.item_uom,
+-                serial_file: item?.serial_file?.id,
++                serial_file: isDuplicate ? undefined : item?.serial_file?.id,
+                 isVariant: item?.item?.is_variant,
+                 is_track_serial: item?.item?.is_track_serial,
+                 require_serial: item?.item?.require_serial,
+-                action: 'update',
++                action: isDuplicate ? 'create' : 'update',
+                 total_cost: item.total_cost,
+             }))
+             if (params.value.page == 1) {
+@@ -503,16 +537,22 @@
+             } else if (params.value.page > 1) {
+                 storeTransfer.formData.inventories.push(...formatInventoryData)
+             }
+-
+-            isLoadingInventory.value = false
+         } catch (err) {
+             console.log(err)
++        } finally {
++            isLoadingInventory.value = false
+         }
+     }
+ 
+     const onPagination = () => {
+         params.value.page++
+-        getInventoryByTransfer(inventoryID.value)
++        getInventoryByTransfer(inventoryID.value, { duplicate: isDuplicatingTransfer.value })
++    }
++
++    const onSaveForm = () => {
++        if (!storeTransfer.formData.reference_no) {
++            storeTransfer.formData.reference_no = undefined
++        }
+     }
+ 
+     const onSaved = form => {
+@@ -597,6 +637,19 @@
+         }
+         storeSummaryData.title_detail = 'Transfer'
+         await storeSummaryData.onReadWorkflow(route.params?.id, CONTENT_TYPE.INVENTORY_TRANSFER)
++
++        const { onGetStorage, onReadStorage, onClearStorage } = object.useStorage()
++        const storage = onGetStorage(duplicateTransferKey)
++        if (!route.params?.id && storage !== null) {
++            try {
++                isDuplicatingTransfer.value = true
++                const id = onReadStorage(storage)
++                const { data } = await ApiService.read(id)
++                await onRead(data, { duplicate: true })
++            } finally {
++                onClearStorage(duplicateTransferKey)
++            }
++        }
+     })
+     onBeforeMount(() => {
+         store.resetState()
+@@ -607,5 +660,7 @@
+ 
+     onBeforeUnmount(() => {
+         AxiosUtils.removeHeader('wdg-url-path')
++        const { onClearStorage } = object.useStorage()
++        onClearStorage(duplicateTransferKey)
+     })
+ </script>
+diff --git forkSrcPrefix/src/modules/inventory/views/transaction/transfer/index.vue forkDstPrefix/src/modules/inventory/views/transaction/transfer/index.vue
+index 3c01dc4ed0d327319394ac10f8953ba0f581e546..838e0ca6f2e8ff847289868c2dce5201e1555c1f 100644
+--- forkSrcPrefix/src/modules/inventory/views/transaction/transfer/index.vue
++++ forkDstPrefix/src/modules/inventory/views/transaction/transfer/index.vue
+@@ -4,7 +4,13 @@
+         name="inventoryTransfer-table"
+         title="Transfer"
+         :headers="activeTab?.headers"
+-        :action-items="[{ type: 'edit' }, { type: 'post' }, { type: 'revoke' }, { type: 'delete' }]"
++        :action-items="[
++            { type: 'edit' },
++            { type: 'duplicate' },
++            { type: 'post' },
++            { type: 'revoke' },
++            { type: 'delete' },
++        ]"
+         :api-service="ApiService"
+         :exportable="true"
+         :get-service-key="activeTab?.getServiceKey"
+@@ -71,17 +77,21 @@
+             </div>
+         </template>
+ 
+-        <!-- Action -->
+-        <template #action="{ item }">
+-            <div v-if="shouldHideActionButton(item) && shouldHideActionPermissionButton(item)" />
++        <template #_action_edit="{ item, accessModel }">
++            <div v-if="!accessModel?.access_right?.update || item.status !== $consts.APPROVAL_STATUS.DRAFT" />
+         </template>
+ 
+-        <template #_action_edit="{ item }">
+-            <div v-if="!accessRight?.update || item.status == 'approved'" />
++        <template #_action_delete="{ item, accessModel }">
++            <div v-if="!accessModel?.access_right?.delete || item.status !== $consts.APPROVAL_STATUS.DRAFT" />
+         </template>
+ 
+-        <template #_action_delete="{ item }">
+-            <div v-if="!accessRight?.delete || item.status == 'approved'" />
++        <template #_action_duplicate="{ item }">
++            <base-action-item
++                color="amber-darken-1"
++                icon="prime-clone"
++                title="Duplicate"
++                @click="onDuplicateItem(item)"
++            />
+         </template>
+ 
+         <template #_action_post="{ item, reload }">
+@@ -145,7 +155,6 @@
+     import { InventoryTransfer, InventoryState } from '@@/inventory/services/transaction.service.ts'
+     import { useInventoryTransaction, useInventoryTransactionTransfer } from '@@/inventory/store/transaction.store'
+     import { useRoute, useRouter } from 'vue-router'
+-    import { useAppStore } from '@/atom/app/app.stores'
+     import { useCustomToast } from '@/composables/useCustomToast'
+     import { POSITION, TYPE } from 'vue-toastification'
+     import i18n from '@/plugins/i18n'
+@@ -161,13 +170,13 @@
+     /* STATES */
+     const ApiService = new InventoryTransfer()
+     const actionOnState = new InventoryState()
+-    const appStore = useAppStore()
+     const store = useInventoryTransaction()
+     const storeTransfer = useInventoryTransactionTransfer()
+     const route = useRoute()
+     const router = useRouter()
+     const children = getMenuTabs(URL_PATH.INVENTORY, [URL_PATH.TRANSACTIONS, URL_PATH.TRANSFER])
+     const activeTab = storeTransfer.tabItems[route.meta.value]
++    const duplicateTransferKey = 'inventoryTransferDuplicateId'
+ 
+     // method
+     const onView = async data => {
+@@ -179,6 +188,16 @@
+         }
+     }
+ 
++    const onDuplicateItem = async item => {
++        const { onSetStorage } = object.useStorage()
++        onSetStorage(duplicateTransferKey, item.id)
++        const createRoute = router.resolve({
++            name: `${activeTab?.routeGroup}.create`,
++        })
++
++        await router.push(createRoute)
++    }
++
+     const viewDetailData = computed(() => ({
+         header: {
+             details: [
+@@ -224,24 +243,6 @@
+         },
+     }))
+ 
+-    const accessRight = computed(() => {
+-        if (typeof appStore.modelAccessRight == 'string') {
+-            return {
+-                update: true,
+-                view: true,
+-                delete: true,
+-            }
+-        }
+-        const access = appStore.modelAccessRight.find(({ model = '' }) => model == CONTENT_TYPE.INVENTORY_TRANSFER)
+-
+-        return access?.access_right ?? {}
+-    })
+-
+-    const shouldHideActionButton = item => {
+-        const disabledStatuses = ['revised', 'draft']
+-        return !disabledStatuses.includes(item.status) || !(accessRight.value?.update || accessRight.value?.delete)
+-    }
+-
+     const action = ref(true)
+     const onAction = async (type, id, state: TState, reload) => {
+         if (state === 'post') store.isPosting = true
+@@ -285,9 +286,6 @@
+ 
+     const transferAction = actionPermission(URL_PATH.TRANSFER)
+     const { canPost, canRevoke } = transferAction
+-    const shouldHideActionPermissionButton = item => {
+-        return item.status != 'approved' || item.state != 'open' || (!canPost && !canRevoke)
+-    }
+     const inventoryTransferTable = ref()
+     const onReloadTable = () => {
+         inventoryTransferTable.value?.reload()
