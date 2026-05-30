@@ -1,0 +1,264 @@
+From 02c711dbed7f9b2c14b0b58815751b48d7e96e0b Mon Sep 17 00:00:00 2001
+From: Shisun <worlddominator007@gmail.com>
+Date: Sat, 30 May 2026 11:41:15 +0700
+Subject: [PATCH] duplicate apbill
+
+---
+ src/helpers/form_helper.ts                    | 21 ++++++
+ .../composables/useAccountPayableDuplicate.ts | 71 +++++++++++++++++++
+ .../account-payable-bill/components/Form.vue  | 23 +++++-
+ .../account-payable-bill/index.vue            | 42 ++++++++++-
+ 4 files changed, 154 insertions(+), 3 deletions(-)
+ create mode 100644 src/modules/account-payable/composables/useAccountPayableDuplicate.ts
+
+diff --git a/src/helpers/form_helper.ts b/src/helpers/form_helper.ts
+index 63a774e..a431c2d 100644
+--- a/src/helpers/form_helper.ts
++++ b/src/helpers/form_helper.ts
+@@ -126,3 +126,24 @@ export const omitInfoFields = <T extends Record<string, any>>(
+     })
+   ) as Partial<T>
+ }
++
++export const duplicateFormObject = <T extends object>(
++  data: T,
++  options: {
++    omitKeys?: string[]
++    omitPrefixes?: string[]
++  } = {}
++): T => {
++  const { omitKeys = [], omitPrefixes = [] } = options
++  const duplicateData = { ...data }
++  const keys = new Set(['formErrors', ...omitKeys])
++  const prefixes = ['display_', ...omitPrefixes]
++
++  Object.keys(duplicateData).forEach((key) => {
++    if (keys.has(key) || prefixes.some((prefix) => key.startsWith(prefix))) {
++      delete (duplicateData as Record<string, unknown>)[key]
++    }
++  })
++
++  return duplicateData
++}
+diff --git a/src/modules/account-payable/composables/useAccountPayableDuplicate.ts b/src/modules/account-payable/composables/useAccountPayableDuplicate.ts
+new file mode 100644
+index 0000000..9a96958
+--- /dev/null
++++ b/src/modules/account-payable/composables/useAccountPayableDuplicate.ts
+@@ -0,0 +1,71 @@
++import { v4 as uuidv4 } from 'uuid'
++import { duplicateFormObject } from '@/helpers/form_helper'
++import { accountPayableBillPure } from '@@/account-payable/services/account-payable-bill.service'
++import type {
++  AccountPayableFormData,
++  AccountPayableReadResponseTransformed,
++  ItemDetailTransformed,
++} from '@@/account-payable/types/account-payable-bill.type'
++
++export const ACCOUNT_PAYABLE_DUPLICATE_STORAGE_KEY = 'accountPayableDuplicateId'
++
++type AccountPayableTransactionType = 'account_payable_bill' | 'expense_bill'
++
++const duplicateItemDetailOmitKeys = ['id', 'uuid', 'object_id', 'content_type', 'item_detail_taxes']
++
++const duplicateAccountPayableOmitKeys = [
++  'id',
++  'reference_no',
++  'create_date',
++  'file_counts',
++  'files',
++  'file',
++  'file_info',
++  'file_delete',
++  'detail_taxes',
++  'payment_applications',
++  'payment_state',
++  'prepayment_amount',
++  'total_after_discount',
++  'total_balance',
++  'total_open_balance',
++  'total_tax',
++  'total_tax_incl',
++  'total_untaxed',
++  'state',
++  'status',
++  'journal',
++  'actions',
++  'object_id',
++  'content_type',
++  'external_reference',
++  'reversed_by',
++  'reversed_date',
++  'reverse_reason',
++  'grn_file_reference',
++]
++
++export function useAccountPayableDuplicate() {
++  function createDuplicateItemDetail(itemDetail: ItemDetailTransformed): ItemDetailTransformed {
++    return {
++      ...accountPayableBillPure.createItemDetail(),
++      ...duplicateFormObject(itemDetail, { omitKeys: duplicateItemDetailOmitKeys }),
++      uuid: uuidv4(),
++    }
++  }
++
++  function createDuplicateAccountPayableFormData(
++    data: AccountPayableReadResponseTransformed,
++    transactionType: AccountPayableTransactionType
++  ): AccountPayableFormData {
++    return {
++      ...accountPayableBillPure.createAccountPayableFormData({ transactionType }),
++      ...duplicateFormObject(data, { omitKeys: duplicateAccountPayableOmitKeys }),
++      item_details: (data.item_details ?? []).map(createDuplicateItemDetail),
++    }
++  }
++
++  return {
++    createDuplicateAccountPayableFormData,
++  }
++}
+diff --git a/src/modules/account-payable/views/transaction/account-payable-bill/components/Form.vue b/src/modules/account-payable/views/transaction/account-payable-bill/components/Form.vue
+index d3bfbbb..c7d75cf 100644
+--- a/src/modules/account-payable/views/transaction/account-payable-bill/components/Form.vue
++++ b/src/modules/account-payable/views/transaction/account-payable-bill/components/Form.vue
+@@ -255,7 +255,7 @@
+     defaultAccountPayableExpenseHeaders,
+   } from '@@/account-payable/services/account-payable-bill.service'
+   import { useRoute, useRouter } from 'vue-router'
+-  import { computed, nextTick, onMounted, provide, ref, watch } from 'vue'
++  import { computed, nextTick, onBeforeMount, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
+   import Detail from '@@/account-payable/views/transaction/account-payable-bill/components/Detail.vue'
+   import Item from '@@/account-payable/views/transaction/account-payable-bill/components/Item.vue'
+   import VendorInfo from '@@/account-payable/views/transaction/account-payable-bill/components/VendorInfo.vue'
+@@ -278,6 +278,11 @@
+   import { hasPermissionAction } from 'wing_digital_web/helpers'
+   import { PATHS } from '@@/account-payable/data/constants'
+   import { CREATED_LAST_MODIFIED_COLUMN } from 'wing_digital_web/constants'
++  import object from '@/utils/object'
++  import {
++    ACCOUNT_PAYABLE_DUPLICATE_STORAGE_KEY,
++    useAccountPayableDuplicate,
++  } from '@@/account-payable/composables/useAccountPayableDuplicate'
+ 
+   export type RouteName = 'ACCOUNT_PAYABLE_BILL' | 'EXPENSE_BILL'
+ 
+@@ -356,6 +361,7 @@
+   })
+ 
+   const formData = ref(accountPayableBillPure.createAccountPayableFormData({ transactionType: transactionType.value }))
++  const { createDuplicateAccountPayableFormData } = useAccountPayableDuplicate()
+ 
+   const dirtyStateChecker = useDirtyStateChecker(formData)
+   const confirmDialogRef = ref()
+@@ -770,12 +776,26 @@
+     AxiosUtils.setHeader('wdg-url-path', activeWdgUrlPath.value)
+   })
+ 
++  const { onGetStorage, onReadStorage, onClearStorage } = object.useStorage()
+   onMounted(async () => {
+     try {
+       shouldInvokeUpdateModelValueEvent.value = false
+ 
+       if (formMode.value === 'create') {
+         formData.value.financial_period = await findCurrentFinancialPeriod()
++        const storage = onGetStorage(ACCOUNT_PAYABLE_DUPLICATE_STORAGE_KEY)
++        if (storage !== null) {
++          const id = onReadStorage(storage)
++          const { data } = await activeService.value.read(String(id))
++          if (!data.object_id) {
++            formData.value = createDuplicateAccountPayableFormData(
++              data as AccountPayableReadResponseTransformed,
++              transactionType.value
++            )
++            formData.value.financial_period = await findCurrentFinancialPeriod()
++            await updateDueDate()
++          }
++        }
+         await computeItem()
+         dirtyStateChecker.setInitialData(formData)
+       }
+@@ -791,6 +811,7 @@
+ 
+   onBeforeUnmount(() => {
+     AxiosUtils.removeHeader('wdg-url-path')
++    onClearStorage(ACCOUNT_PAYABLE_DUPLICATE_STORAGE_KEY)
+   })
+ 
+   provide('transaction', {
+diff --git a/src/modules/account-payable/views/transaction/account-payable-bill/index.vue b/src/modules/account-payable/views/transaction/account-payable-bill/index.vue
+index adfc8d3..c9634f5 100644
+--- a/src/modules/account-payable/views/transaction/account-payable-bill/index.vue
++++ b/src/modules/account-payable/views/transaction/account-payable-bill/index.vue
+@@ -6,7 +6,7 @@
+     :route-group="activeTab.routeGroup"
+     :get-service-key="activeTab.getServiceKey"
+     :link-tabs="activeChildren"
+-    :action-items="[{ type: 'edit' }, { type: 'delete' }]"
++    :action-items="[{ type: 'edit' }, { type: 'delete' }, { type: 'duplicate' }]"
+     :api-service="activeService"
+     :exportable="true"
+     :title="$route.meta.title"
+@@ -153,7 +153,25 @@
+       <PendingAvatar :item="tableItem" :search="search" />
+     </template>
+     <template #action="{ item: tableItem }">
+-      <div v-if="!(tableItem.status === 'draft')" />
++      <div v-if="tableItem.status !== $consts.APPROVAL_STATUS.DRAFT && !canDuplicateItem(tableItem)" />
++    </template>
++
++    <template #_action_edit="{ item: tableItem }">
++      <div v-if="tableItem.status !== $consts.APPROVAL_STATUS.DRAFT" />
++    </template>
++
++    <template #_action_delete="{ item: tableItem }">
++      <div v-if="tableItem.status !== $consts.APPROVAL_STATUS.DRAFT" />
++    </template>
++
++    <template #_action_duplicate="{ item: tableItem }">
++      <base-action-item
++        v-if="canDuplicateItem(tableItem)"
++        color="amber-darken-1"
++        icon="prime-clone"
++        title="Duplicate"
++        @click="onDuplicateItem(tableItem)"
++      />
+     </template>
+ 
+     <template #tableActions>
+@@ -218,6 +236,8 @@
+   import { getMenuTabs } from 'wing_digital_web/helpers'
+   import { useAppStore } from 'wing_digital_web/stores'
+   import { CREATED_LAST_MODIFIED_COLUMN } from 'wing_digital_web/constants'
++  import object from '@/utils/object'
++  import { ACCOUNT_PAYABLE_DUPLICATE_STORAGE_KEY } from '@@/account-payable/composables/useAccountPayableDuplicate'
+ 
+   const route = useRoute()
+   const router = useRouter()
+@@ -348,6 +368,24 @@
+     return (route.name as string).split('.')[0]
+   })
+ 
++  const canDuplicateItem = (item: AccountPayableReadResponse) => {
++    return !item.object_id
++  }
++
++  const onDuplicateItem = async (item: AccountPayableReadResponse) => {
++    if (!canDuplicateItem(item)) {
++      return
++    }
++
++    const { onSetStorage } = object.useStorage()
++    onSetStorage(ACCOUNT_PAYABLE_DUPLICATE_STORAGE_KEY, item.id)
++    const createRoute = router.resolve({
++      name: `${routeGroup.value}.create`,
++    })
++
++    await router.push(createRoute)
++  }
++
+   const viewDetailData = computed(() => ({
+     header: {
+       details: [
+-- 
+2.50.1.windows.1
+

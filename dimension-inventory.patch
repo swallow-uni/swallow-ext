@@ -1,0 +1,1688 @@
+From f59c40f27f2969080e8888844edd0163e26f41a8 Mon Sep 17 00:00:00 2001
+From: "vyrapol.vutha" <vyrapol.vutha@wingbank.com.kh>
+Date: Sat, 30 May 2026 13:31:24 +0700
+Subject: [PATCH] add: dimension inventory
+
+---
+ src/modules/inventory/components/dialog.vue   | 100 ++++++++++--
+ .../components/dialogItemReplace.vue          | 146 +++++++++++++-----
+ src/modules/inventory/data/index.ts           |  10 +-
+ src/modules/inventory/helpers/index.ts        |   3 +-
+ .../inventory/store/transaction.store.ts      |   9 +-
+ src/modules/inventory/types/TInventory.ts     |   9 ++
+ .../views/transaction/adjustment/form.vue     |  64 +++++++-
+ .../views/transaction/issue/form.vue          |  58 ++++++-
+ .../views/transaction/production/form.vue     |  88 +++++++++--
+ .../views/transaction/receipt/form.vue        |  61 +++++++-
+ .../views/transaction/transfer/form.vue       |  60 ++++++-
+ .../transaction/transfer_request/form.vue     |  55 ++++++-
+ 12 files changed, 580 insertions(+), 83 deletions(-)
+
+diff --git a/src/modules/inventory/components/dialog.vue b/src/modules/inventory/components/dialog.vue
+index bce20b162d..af70366207 100644
+--- a/src/modules/inventory/components/dialog.vue
++++ b/src/modules/inventory/components/dialog.vue
+@@ -26,6 +26,7 @@
+         <div class="d-flex align-center justify-space-between">
+             <v-tabs v-model="activeTab" bg-color="transparent" color="active" density="compact">
+                 <v-tab value="detail"> Detail</v-tab>
++                <v-tab v-if="shouldShowAnalytic" value="account_dimension">Account Dimension</v-tab>
+                 <v-tab
+                     v-if="isItemHasSerial && transaction_type != 'transfer_request'"
+                     value="serial_item"
+@@ -752,6 +753,23 @@
+                 </div>
+             </v-window-item>
+ 
++            <v-window-item value="account_dimension" eager>
++                <v-form ref="analyticFormRef" class="pa-4">
++                    <div class="item-detail-grid">
++                        <div v-for="item in applicableCases" :key="item.id" class="pt-2" style="box-sizing: border-box">
++                            <analytic-dimension-item
++                                v-model="formData.analytic.dimension"
++                                :item="item"
++                                :rules="[requiredRule]"
++                                :mode="store.formMode"
++                                :fetch-value-lookup="fetchValueLookup"
++                                :applicable-cases="applicableCases"
++                            />
++                        </div>
++                    </div>
++                </v-form>
++            </v-window-item>
++
+             <!-- Serial Item -->
+             <v-window-item value="serial_item">
+                 <Serial
+@@ -766,7 +784,8 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { ref, computed, watchEffect } from 'vue'
++    import { computed, inject, nextTick, ref, watch, watchEffect } from 'vue'
++    import { storeToRefs } from 'pinia'
+     import { useInventoryTransaction } from '@@/inventory/store/transaction.store'
+     import { lookupServices } from '@@/inventory/services/baseLookUp.service.ts'
+     import { ItemSerial } from '@@/app/services/serial'
+@@ -779,6 +798,8 @@
+     import object from '@/utils/object'
+     import {
+         ADJUST_TYPES,
++        createInventoryAnalytic,
++        INVENTORY_ANALYTIC_DOMAIN,
+         INVENTORY_IMAGE_HEADERS,
+         INVENTORY_STATUS_FILTER,
+         LOCATION_HEADERS,
+@@ -791,8 +812,9 @@
+     import { useViewImage } from '@/composables/useViewImage'
+     import itemPlaceholder from '@/assets/images/item-placeholder.png'
+     import { DataUpload } from '@@/composables/useSerial'
+-    import uniqBy from 'lodash/uniqBy'
+     import { useI18n } from 'vue-i18n'
++    import cloneDeep from 'lodash/cloneDeep'
++    import { useAnalyticMeta } from '@/composables/useAnalytic'
+ 
+     const store = useInventoryTransaction()
+     const apiLookupService = new lookupServices()
+@@ -814,7 +836,7 @@
+         },
+         data: {
+             type: Array,
+-            default: [],
++            default: () => [],
+         },
+         parentFormMode: {
+             type: String,
+@@ -829,7 +851,7 @@
+         },
+         formErrors: {
+             type: Object,
+-            default: {},
++            default: () => ({}),
+         },
+         isDisable: {
+             type: Boolean,
+@@ -849,8 +871,24 @@
+         toWarehouse: {
+             type: Object,
+         },
++        applicableCases: {
++            type: Array,
++            default: () => [],
++        },
++        hasAnalytic: {
++            type: Boolean,
++            default: false,
++        },
+     })
+ 
++    const analyticMainData: any = inject('analyticMainData')
++    const createFormAnalytic = (analytic?: Record<string, any> | null) =>
++        createInventoryAnalytic(
++            analytic ?? {
++                dimension: cloneDeep(analyticMainData?.value?.analytic?.dimension ?? {}),
++            }
++        )
++
+     const serialStore = useSerialStore()
+     const { isSelectAll, selectedSerial, isSelectedSerial, dataUpload, isWrongTemplate, errorSerial } =
+         storeToRefs(serialStore)
+@@ -934,7 +972,11 @@
+         issue_info: null,
+         available_qty_uom: null,
+         allow_negative: false,
++        analytic: createFormAnalytic(),
+     })
++    const analyticFormRef = ref()
++    const shouldShowAnalytic = computed(() => Boolean(props.hasAnalytic && len(props.applicableCases)))
++    const { fetchValueLookup, requiredRule } = useAnalyticMeta(INVENTORY_ANALYTIC_DOMAIN)
+ 
+     const isDirtyState = ref(false)
+     const localAvailableQty = ref(null)
+@@ -977,6 +1019,7 @@
+         formData.value.issue_info = null
+         formData.value.available_qty_uom = null
+         formData.value.allow_negative = false
++        formData.value.analytic = createFormAnalytic()
+         localAvailableQty.value = null
+         store.formMode = 'create'
+         isDirtyState.value = false
+@@ -986,9 +1029,14 @@
+         return formData.value.is_track_serial && formData.value.require_serial
+     })
+ 
+-    const calTotalAmount = computed(() => {
+-        return (formData.value.totalAmount = parseFloat(formData.value.quantity * formData.value.price).toFixed(2))
+-    })
++    const calTotalAmount = computed(() => parseFloat(formData.value.quantity * formData.value.price).toFixed(2))
++    watch(
++        calTotalAmount,
++        value => {
++            formData.value.totalAmount = value
++        },
++        { immediate: true }
++    )
+ 
+     const errorMessage = ref({})
+ 
+@@ -1012,6 +1060,7 @@
+             txn_dtl_content_type: formData.value?.txn_dtl_content_type,
+             unit_cost_base_uom: formData.value?.unit_cost_base_uom,
+             unit_cost_uom: formData.value?.unit_cost_uom,
++            analytic: formData.value.analytic,
+         }
+ 
+         switch (transaction_type) {
+@@ -1062,6 +1111,16 @@
+         }
+     }
+ 
++    const validateAnalytic = async () => {
++        if (!shouldShowAnalytic.value) return true
++        const validation = await analyticFormRef.value?.validate()
++        if (validation?.valid === false) {
++            activeTab.value = 'account_dimension'
++            return false
++        }
++        return true
++    }
++
+     const $confirmSaveQtyDialogRef = ref()
+     const { t } = useI18n()
+     const onConfirmQuantity = async (): Promise<void> => {
+@@ -1089,6 +1148,7 @@
+         try {
+             saveLoading.value = true
+             activeTab.value = 'detail'
++            if (!(await validateAnalytic())) return
+             if (isItemHasSerial.value && props.transaction_type != 'transfer_request') {
+                 // Create a FormData object
+                 let formFile = new FormData()
+@@ -1137,7 +1197,7 @@
+ 
+             await itemSerial
+                 .validateForm(props.transaction_type, validateForm())
+-                .then(res => {
++                .then(() => {
+                     // Close the dialog
+ 
+                     isWrongTemplate.value = false
+@@ -1151,6 +1211,9 @@
+                 })
+                 .catch(error => {
+                     errorMessage.value = error?.response?.data?.error?.form_errors
++                    if (errorMessage.value?.analytic) {
++                        activeTab.value = 'account_dimension'
++                    }
+                 })
+             if (
+                 (isSelectedSerial.value && !len(selectedSerial.value)) ||
+@@ -1468,6 +1531,7 @@
+                     issue_info: item?.issue_info,
+                     available_qty_uom: item?.available_qty_uom,
+                     allow_negative: item?.allow_negative,
++                    analytic: createFormAnalytic(item?.analytic),
+                 }
+                 // selectedSerial.value = !!item?.selectedSerial
+                 localAvailableQty.value = item?.available_qty_uom
+@@ -1594,7 +1658,6 @@
+         if (data == false) {
+             errorMessage.value = {}
+             activeTab.value = 'detail'
+-            props.formErrors.serialNumber = ''
+             if (store.formMode === 'create') {
+                 emptyFormdata()
+             }
+@@ -1693,6 +1756,7 @@
+             unit_cost_base_uom: item?.unit_cost_base_uom ?? 0,
+             issue: item?.issue,
+             issue_info: item?.issue_info,
++            analytic: createFormAnalytic(item?.analytic),
+         }
+         variants.value = []
+         selectedVariants.value = {}
+@@ -1737,10 +1801,12 @@
+     watch(
+         () => props.formErrors,
+         val => {
+-            if (
+-                val[store.indexItemInventory]?.serial_file !== undefined &&
+-                len(val[store.indexItemInventory]?.serial_file)
+-            ) {
++            const itemErrors = val?.[store.indexItemInventory]
++            if (itemErrors?.analytic) {
++                activeTab.value = 'account_dimension'
++                return
++            }
++            if (itemErrors?.serial_file !== undefined && len(itemErrors?.serial_file)) {
+                 activeTab.value = 'serial_item'
+             }
+         },
+@@ -1768,4 +1834,10 @@
+     }
+ </script>
+ 
+-<style lang="scss" scoped></style>
++<style lang="scss" scoped>
++    .item-detail-grid {
++        display: grid;
++        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
++        gap: 26px;
++    }
++</style>
+diff --git a/src/modules/inventory/components/dialogItemReplace.vue b/src/modules/inventory/components/dialogItemReplace.vue
+index 44700ba6e3..af6138d425 100644
+--- a/src/modules/inventory/components/dialogItemReplace.vue
++++ b/src/modules/inventory/components/dialogItemReplace.vue
+@@ -24,17 +24,8 @@
+                 @update:model-value="onSelectTab"
+             >
+                 <v-tab value="detail"> Detail</v-tab>
+-                <v-tab
+-                    v-if="
+-                        dialogData?.item_info?.is_track_serial &&
+-                        dialogData?.item_info?.require_serial &&
+-                        type === 'production'
+-                    "
+-                    value="serial"
+-                    :loading="isLoadingSerialItem"
+-                >
+-                    Serial
+-                </v-tab>
++                <v-tab v-if="shouldShowAnalytic" value="account_dimension">Account Dimension</v-tab>
++                <v-tab v-if="isItemSerialTabVisible" value="serial" :loading="isLoadingSerialItem"> Serial </v-tab>
+             </v-tabs>
+         </div>
+ 
+@@ -60,7 +51,7 @@
+                                 :mode="formMode"
+                                 @update:model-value="onSelectItem"
+                             >
+-                                <template #name="{ item, search }">
++                                <template #name="{ item }">
+                                     <AppProfileCard
+                                         :src="item?.file?.image_thumbnail_url ?? itemPlaceholder"
+                                         :name="item?.reference_no"
+@@ -71,7 +62,7 @@
+                                         @image-click="onViewImage($event, item)"
+                                     />
+                                 </template>
+-                                <template #is_active="{ item, search }">
++                                <template #is_active="{ item }">
+                                     <BaseField :model-value="item.is_active" field-type="boolean" mode="view" />
+                                 </template>
+                             </base-autocomplete>
+@@ -93,7 +84,7 @@
+                                 :error-messages="formErrors?.item_replacement"
+                                 @selected-item="onSelectReplacementItem"
+                             >
+-                                <template #name="{ item, search }">
++                                <template #name="{ item }">
+                                     <AppProfileCard
+                                         :src="item?.file?.image_thumbnail_url ?? itemPlaceholder"
+                                         :name="item?.reference_no"
+@@ -104,7 +95,7 @@
+                                         @image-click="onViewImage($event, item)"
+                                     />
+                                 </template>
+-                                <template #is_active="{ item, search }">
++                                <template #is_active="{ item }">
+                                     <BaseField :model-value="item.is_active" field-type="boolean" mode="view" />
+                                 </template>
+                             </base-autocomplete>
+@@ -173,10 +164,7 @@
+                                 hide-details="auto"
+                                 :mode="formMode"
+                                 :error-messages="formErrors?.produce_qty"
+-                                :disabled="
+-                                    store.onFormType === 'replace' ||
+-                                    (dialogData?.is_spec_component && !dialogData.allow_edit)
+-                                "
++                                :disabled="isProduceQuantityDisabled"
+                                 :clearable="false"
+                                 field-type="currency"
+                                 :precision="4"
+@@ -186,6 +174,22 @@
+                     </v-row>
+                 </div>
+             </v-window-item>
++            <v-window-item value="account_dimension" eager>
++                <v-form ref="analyticFormRef" class="pa-4">
++                    <div class="item-detail-grid">
++                        <div v-for="item in applicableCases" :key="item.id" class="pt-2" style="box-sizing: border-box">
++                            <analytic-dimension-item
++                                v-model="dialogData.analytic.dimension"
++                                :item="item"
++                                :rules="[requiredRule]"
++                                :mode="formMode"
++                                :fetch-value-lookup="fetchValueLookup"
++                                :applicable-cases="applicableCases"
++                            />
++                        </div>
++                    </div>
++                </v-form>
++            </v-window-item>
+             <v-window-item value="serial">
+                 <Serial
+                     ref="serialUpload"
+@@ -204,10 +208,7 @@
+                             text="Item serial can't be empty."
+                         />
+                         <v-alert
+-                            v-else-if="
+-                                stockErrorForm?.[store.indexItem]?.serial_file ||
+-                                nonStockErrorForm?.[store.indexItem]?.serial_file
+-                            "
++                            v-else-if="hasLineSerialError"
+                             border="start"
+                             type="error"
+                             variant="outlined"
+@@ -223,7 +224,7 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { ref, watchEffect, computed } from 'vue'
++    import { ref, watchEffect, computed, inject } from 'vue'
+     import { lookupServices } from '@@/inventory/services/baseLookUp.service.ts'
+     import { useInventoryProduction } from '@@/inventory/store/transaction.store'
+     import { useInventoryAssembly } from '@@/inventory/store/config.store'
+@@ -232,12 +233,19 @@
+     import { ItemSerial } from '@@/app/services/serial'
+     import Serial from '@@/components/serial/Serial.vue'
+     import { useSerialStore } from '@@/store/serial'
+-    import { INVENTORY_IMAGE_HEADERS, uomHeaders } from '@@/inventory/data'
++    import {
++        createInventoryAnalytic,
++        INVENTORY_ANALYTIC_DOMAIN,
++        INVENTORY_IMAGE_HEADERS,
++        uomHeaders,
++    } from '@@/inventory/data'
+     import { len } from '@/utils/core'
+     import AppProfileCard from '@/components/app/AppProfileCard.vue'
+     import { useViewImage } from '@/composables/useViewImage'
+     import { API_BASE_URL } from '@/utils/api-base-url'
+     import itemPlaceholder from '@/assets/images/item-placeholder.png'
++    import cloneDeep from 'lodash/cloneDeep'
++    import { useAnalyticMeta } from '@/composables/useAnalytic'
+ 
+     const apiLookupService = new lookupServices()
+     const store = useInventoryProduction()
+@@ -267,6 +275,14 @@
+             type: Object,
+             default: () => ({}),
+         },
++        applicableCases: {
++            type: Array,
++            default: () => [],
++        },
++        hasAnalytic: {
++            type: Boolean,
++            default: false,
++        },
+     })
+     /* emits */
+     const emits = defineEmits(['discard', 'onSave'])
+@@ -309,6 +325,16 @@
+     const isShowCheckbox = computed(() => {
+         return props.type === 'production'
+     })
++    const analyticMainData: any = inject('analyticMainData')
++    const createFormAnalytic = (analytic?: Record<string, any> | null) =>
++        createInventoryAnalytic(
++            analytic ?? {
++                dimension: cloneDeep(analyticMainData?.value?.analytic?.dimension ?? {}),
++            }
++        )
++    const analyticFormRef = ref()
++    const shouldShowAnalytic = computed(() => Boolean(props.hasAnalytic && len(props.applicableCases)))
++    const { fetchValueLookup, requiredRule } = useAnalyticMeta(INVENTORY_ANALYTIC_DOMAIN)
+ 
+     const dialogData = ref({
+         item: null,
+@@ -322,17 +348,22 @@
+         assembly_qty: null,
+         produce_quantity: null,
+         produce_qty: null,
++        analytic: createFormAnalytic(),
+     })
+-    const itemHeaders = [
+-        {
+-            text: 'Code',
+-            value: 'reference_no',
+-        },
+-        {
+-            text: 'Name',
+-            value: 'name',
+-        },
+-    ]
++    const isItemSerialTabVisible = computed(
++        () =>
++            dialogData.value?.item_info?.is_track_serial &&
++            dialogData.value?.item_info?.require_serial &&
++            props.type === 'production'
++    )
++    const isProduceQuantityDisabled = computed(
++        () => store.onFormType === 'replace' || (dialogData.value?.is_spec_component && !dialogData.value.allow_edit)
++    )
++    const hasLineSerialError = computed(
++        () =>
++            props.stockErrorForm?.[store.indexItem]?.serial_file ||
++            props.nonStockErrorForm?.[store.indexItem]?.serial_file
++    )
+ 
+     const onCancel = () => {
+         emits('discard')
+@@ -353,6 +384,7 @@
+             produce_quantity: null,
+             produce_qty: null,
+             action: 'create',
++            analytic: createFormAnalytic(),
+         }
+     }
+ 
+@@ -368,6 +400,7 @@
+             assembly_qty: null,
+             produce_quantity: null,
+             produce_qty: null,
++            analytic: createFormAnalytic(),
+         }
+ 
+         if (props.type === 'production') {
+@@ -445,6 +478,7 @@
+                     is_spec_component: store?.dialogData?.is_spec_component,
+                     serial_file: store?.dialogData?.serial_file ?? null,
+                     is_created: store?.dialogData?.is_created,
++                    analytic: createFormAnalytic(store?.dialogData?.analytic),
+                 }
+             } else {
+                 dialogData.value = {
+@@ -460,6 +494,7 @@
+                     action: storeAssembly?.dialogData.id ? 'update' : 'create',
+                     tempAction: storeAssembly?.dialogData.item ? 'editChild' : 'create',
+                     formMode: props.formMode,
++                    analytic: createFormAnalytic(storeAssembly?.dialogData?.analytic),
+                 }
+             }
+         } else {
+@@ -495,6 +530,7 @@
+                     produce_factor: Number(store.formData.produce_factor),
+                     produce_qty: dialogData.value.produce_qty,
+                     serial_file: dialogData.value.serial_file ?? undefined,
++                    analytic: dialogData.value.analytic,
+                 }
+             default:
+                 return {}
+@@ -503,9 +539,23 @@
+     const validateMethod = new InventoryProduction()
+     const isSaveLoading = ref(false)
+     const serialUpload = ref()
++    const validateAnalytic = async () => {
++        if (!shouldShowAnalytic.value) return true
++        const validation = await analyticFormRef.value?.validate()
++        if (validation?.valid === false) {
++            tabs.value = 'account_dimension'
++            return false
++        }
++        return true
++    }
+     const onSave = async () => {
++        isSaveLoading.value = true
++        tabs.value = 'detail'
++        if (!(await validateAnalytic())) {
++            isSaveLoading.value = false
++            return
++        }
+         try {
+-            isSaveLoading.value = true
+             if (props.type === 'production') {
+                 if (dialogData.value?.item_info?.is_track_serial && dialogData.value?.item_info?.require_serial) {
+                     // Create a FormData object
+@@ -515,7 +565,9 @@
+                     if (len(selectedSerial.value)) {
+                         formFile.append(
+                             'file',
+-                            new File([JSON.stringify(selectedSerial.value)], 'item_serial.json', { type: 'application/json' })
++                            new File([JSON.stringify(selectedSerial.value)], 'item_serial.json', {
++                                type: 'application/json',
++                            })
+                         )
+                         formFile.append('ref_type', 'inventory')
+                         formFile.append('hr_employee', store.formData.hr_employee)
+@@ -533,14 +585,16 @@
+             if (props.type === 'production') {
+                 await validateMethod
+                     .kitValidation(kitsValidation())
+-                    .then(res => {
++                    .then(() => {
+                         emits('onSave', dialogData.value)
+                         formErrors.value = null
+                         store.isOpenDialog = false
+                     })
+                     .catch(err => {
+                         formErrors.value = err?.response?.data?.error?.form_errors
+-                        if (err?.response?.data?.error?.form_errors?.serial_file) {
++                        if (err?.response?.data?.error?.form_errors?.analytic) {
++                            tabs.value = 'account_dimension'
++                        } else if (err?.response?.data?.error?.form_errors?.serial_file) {
+                             tabs.value = 'serial'
+                         } else {
+                             tabs.value = 'detail'
+@@ -623,8 +677,10 @@
+     watch(
+         [() => props.stockErrorForm, () => props.nonStockErrorForm],
+         ([stock, nonStock]) => {
+-            const item = stock[store.indexItem] ?? nonStock[store.indexItem]
+-            if (item?.serial_file && len(item.serial_file)) {
++            const item = props.activeTab === 'stock_kits' ? stock?.[store.indexItem] : nonStock?.[store.indexItem]
++            if (item?.analytic) {
++                tabs.value = 'account_dimension'
++            } else if (item?.serial_file && len(item.serial_file)) {
+                 tabs.value = 'serial'
+             }
+         },
+@@ -656,3 +712,11 @@
+         }
+     }
+ </script>
++
++<style lang="scss" scoped>
++    .item-detail-grid {
++        display: grid;
++        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
++        gap: 26px;
++    }
++</style>
+diff --git a/src/modules/inventory/data/index.ts b/src/modules/inventory/data/index.ts
+index f5814f9f58..09df3ff1e5 100644
+--- a/src/modules/inventory/data/index.ts
++++ b/src/modules/inventory/data/index.ts
+@@ -1,4 +1,4 @@
+-import { WORKFLOW_STATUS } from '@/data/constants'
++import { ACCOUNT_DIMENSION_DOMAIN, WORKFLOW_STATUS } from '@/data/constants'
+ import { underscoreToCamel } from '@/utils/str'
+ import i18n from '@/plugins/i18n'
+ 
+@@ -58,6 +58,14 @@ export const CONTENT_TYPE = {
+     INVENTORY_COMMODITY_GROUP: 'itemgroup',
+ }
+ 
++export const INVENTORY_ANALYTIC_DOMAIN = ACCOUNT_DIMENSION_DOMAIN.INVENTORY
++
++export const createInventoryAnalytic = (analytic?: Record<string, any> | null) => ({
++    ...analytic,
++    domain: analytic?.domain ?? INVENTORY_ANALYTIC_DOMAIN,
++    dimension: analytic?.dimension ?? {},
++})
++
+ export const pathFromTransactionType = {
+     issues: 'issues',
+     receipt_in_transit: 'receipt',
+diff --git a/src/modules/inventory/helpers/index.ts b/src/modules/inventory/helpers/index.ts
+index 9e9a014d05..8f47069d2c 100644
+--- a/src/modules/inventory/helpers/index.ts
++++ b/src/modules/inventory/helpers/index.ts
+@@ -2,7 +2,7 @@ import { useCurrencyFormat } from '@/composables/useFormat'
+ import { formatNumber } from '@/utils/helper'
+ import type { InventoryItem } from '@@/inventory/types/TInventory'
+ import { hasPermissionAction } from '@/helpers/permission'
+-import { URL_PATH } from '@@/inventory/data'
++import { createInventoryAnalytic, URL_PATH } from '@@/inventory/data'
+ import get from 'lodash/get'
+ import some from 'lodash/some'
+ 
+@@ -18,6 +18,7 @@ export const mapSharedInventory = value => ({
+     action: 'create',
+     txn_dtl_object_id: value.id,
+     txn_dtl_content_type: value.content_type_id,
++    analytic: createInventoryAnalytic(value?.analytic),
+ })
+ 
+ export const mapIssueInventories = async (value): Promise<Partial<InventoryItem>> => {
+diff --git a/src/modules/inventory/store/transaction.store.ts b/src/modules/inventory/store/transaction.store.ts
+index e6b258768c..295f5f6311 100644
+--- a/src/modules/inventory/store/transaction.store.ts
++++ b/src/modules/inventory/store/transaction.store.ts
+@@ -6,7 +6,7 @@ import { len } from '@/utils/core'
+ import { mapIssueInventories, mapReceiptInventories } from '@/modules/inventory/helpers'
+ import { formatNumber } from '@/utils/helper'
+ import object from '@/utils/object'
+-import { pathFromTransactionType, sessionKey, STATE_COLUMN } from '@@/inventory/data'
++import { createInventoryAnalytic, pathFromTransactionType, sessionKey, STATE_COLUMN } from '@@/inventory/data'
+ import { CONTENT_TYPE as ICONTENT_TYPE, STATUS_COLUMN } from '@@/inventory/data'
+ import get from 'lodash/get'
+ import { TRANSFER_REQUEST_HEADERS } from '@@/inventory/data/transfer-request'
+@@ -196,6 +196,7 @@ export const useInventoryTransactionReceipt = defineStore('InventoryTransactionR
+                 issues: [],
+                 files: [],
+                 file_counts: 0,
++                analytic: createInventoryAnalytic(),
+             },
+             warehouse_info: null,
+             location_info: null,
+@@ -305,6 +306,7 @@ export const useInventoryTransactionIssue = defineStore('InventoryTransactionIss
+                 external_reference: null,
+                 files: [],
+                 file_counts: 0,
++                analytic: createInventoryAnalytic(),
+             },
+             warehouse_info: null,
+             location_info: null,
+@@ -418,6 +420,7 @@ export const useInventoryTransactionTransferReq = defineStore('InventoryTransact
+                 external_type: 'transfer_request',
+                 files: [],
+                 file_counts: 0,
++                analytic: createInventoryAnalytic(),
+             },
+             warehouse_label: 'From Warehouse',
+             loading: false,
+@@ -495,6 +498,7 @@ export const useInventoryTransactionAdjustment = defineStore('InventoryTransacti
+                 external_type: 'adjustment',
+                 files: [],
+                 file_counts: 0,
++                analytic: createInventoryAnalytic(),
+             },
+             location_info: null,
+         }
+@@ -589,6 +593,7 @@ export const useInventoryTransactionTransfer = defineStore('useInventoryTransact
+                 external_type: 'transfer',
+                 files: [],
+                 file_counts: 0,
++                analytic: createInventoryAnalytic(),
+             },
+         }
+     },
+@@ -811,6 +816,7 @@ export const useInventoryProduction = defineStore('useInventoryProduction', {
+                 produce_qty: null,
+                 files: [],
+                 file_counts: 0,
++                analytic: createInventoryAnalytic(),
+             },
+             dialogData: {
+                 item: null,
+@@ -821,6 +827,7 @@ export const useInventoryProduction = defineStore('useInventoryProduction', {
+                 allow_replace: true,
+                 assembly_qty: null,
+                 produce_quantity: null,
++                analytic: createInventoryAnalytic(),
+             },
+             selectedStepIndex: 0,
+             formMode: 'create',
+diff --git a/src/modules/inventory/types/TInventory.ts b/src/modules/inventory/types/TInventory.ts
+index 298f2c5401..49f180f440 100644
+--- a/src/modules/inventory/types/TInventory.ts
++++ b/src/modules/inventory/types/TInventory.ts
+@@ -78,6 +78,11 @@ export interface Warehouse {
+     reference_no: string
+ }
+ 
++export interface Analytic {
++    domain: string
++    dimension: Record<string, any>
++}
++
+ export class InventoryItem {
+     id = -1
+     receipt = -1
+@@ -101,6 +106,10 @@ export class InventoryItem {
+     adjust_cost = ''
+     display_adjust_cost = ''
+     input_qty = '' // qty requested
++    analytic: Analytic = {
++        domain: '',
++        dimension: {},
++    }
+ 
+     get display_quantity() {
+         return processNumber(this.quantity, true, { number: { fraction: 4 } })
+diff --git a/src/modules/inventory/views/transaction/adjustment/form.vue b/src/modules/inventory/views/transaction/adjustment/form.vue
+index 54ea47518c..7f02594af4 100644
+--- a/src/modules/inventory/views/transaction/adjustment/form.vue
++++ b/src/modules/inventory/views/transaction/adjustment/form.vue
+@@ -97,6 +97,21 @@
+                     <v-tab value="inventory"> Inventory </v-tab>
+                     <v-tab value="approver"> Approvers </v-tab>
+                 </v-tabs>
++                <div v-show="activeTab === 'detail'">
++                    <base-dimension-btn
++                        v-if="analyticDomain"
++                        ref="analyticRef"
++                        :module="analyticDomain"
++                        :default-value="analyticDimension"
++                        :color="analyticError ? 'error' : 'primary'"
++                        variant="tonal"
++                        :rounded="2"
++                        :form-mode="formMode"
++                        :employee-id="storeAdjustment.formData.hr_employee"
++                        @save="handleUpdateAnalytic"
++                        @get-applicable-cases="handleGetApplicableCases"
++                    />
++                </div>
+             </div>
+             <v-window v-model="activeTab">
+                 <v-window-item value="detail">
+@@ -186,7 +201,7 @@
+                     </v-row>
+                 </v-window-item>
+                 <v-window-item value="inventory">
+-                    <Filter :form-mode="formMode" @onSearch="searchResult" />
++                    <Filter :form-mode="formMode" @on-search="searchResult" />
+                     <Card
+                         v-if="storeAdjustment.formData.inventories"
+                         :items="storeAdjustment.formData.inventories"
+@@ -199,7 +214,10 @@
+                         :parent-form-mode="formMode"
+                         transaction_type="adjustment"
+                         :location_info="storeAdjustment.location_info"
+-                        @onSave="transferData"
++                        :form-errors="formErrors?.inventories"
++                        :applicable-cases="applicableCases"
++                        :has-analytic="analyticRef?.isActive"
++                        @on-save="transferData"
+                     />
+                     <div v-if="isLoadingInventory" class="d-flex justify-center">
+                         <v-progress-circular color="primary" :width="9" indeterminate />
+@@ -244,7 +262,7 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { ref, onMounted, onBeforeMount, provide, onBeforeUnmount } from 'vue'
++    import { ref, onMounted, onBeforeMount, provide, onBeforeUnmount, computed, nextTick, toRef } from 'vue'
+     import { InventoryAdjustment, InventoryState } from '@@/inventory/services/transaction.service.ts'
+     import {
+         useInventoryTransaction,
+@@ -265,7 +283,13 @@
+     import { useCustomToast } from '@/composables/useCustomToast'
+     import { POSITION, TYPE } from 'vue-toastification'
+     import i18n from '@/plugins/i18n'
+-    import { CONTENT_TYPE, inventoryFields, URL_PATH } from '@@/inventory/data'
++    import {
++        CONTENT_TYPE,
++        createInventoryAnalytic,
++        INVENTORY_ANALYTIC_DOMAIN,
++        inventoryFields,
++        URL_PATH,
++    } from '@@/inventory/data'
+     import { useFormSetup } from '@/composables/useFormSetup'
+     import debounce from 'lodash/debounce'
+     import type { TState } from '@@/inventory/types/TInventory'
+@@ -274,6 +298,8 @@
+     import { dateFormat } from '@/utils/date'
+     import object from '@/utils/object'
+     import { actionPermission, matchError } from '@@/inventory/helpers'
++    import BaseDimensionBtn from '@/components/Buttons/BaseDimensionBtn.vue'
++    import { useAnalytic } from '@/composables/useAnalytic'
+ 
+     const ApiService = new InventoryAdjustment()
+     const lookUpService = new lookupServices()
+@@ -283,6 +309,14 @@
+     const activeTab = ref('')
+     const route = useRoute()
+     const actionOnState = new InventoryState()
++    const adjustmentFormData = toRef(storeAdjustment, 'formData')
++    const { analyticDimension, analyticDomain, updateAnalytic } = useAnalytic(
++        INVENTORY_ANALYTIC_DOMAIN,
++        adjustmentFormData
++    )
++    const analyticRef = ref()
++    const analyticError = ref(false)
++    const applicableCases = ref<any[]>([])
+ 
+     onMounted(async () => {
+         if (!route.params?.id) {
+@@ -353,6 +387,7 @@
+             require_serial: data?.require_serial,
+             fifo_transaction_info: data?.fifo_transaction_info ?? undefined,
+             fifo_transaction: data?.fifo_transaction ?? undefined,
++            analytic: createInventoryAnalytic(data?.analytic),
+         }
+         if (store.formMode == 'create') {
+             // Push the new object to the inventories array
+@@ -369,6 +404,15 @@
+     }
+     const onSaved = form => {
+         const { formErrors } = form
++        if (formErrors.analytic) {
++            activeTab.value = 'detail'
++            analyticError.value = true
++            analyticRef.value?.openDialog()
++            nextTick(() => {
++                analyticRef.value?.submitForm()
++            })
++            return
++        }
+         if (matchError(inventoryFields, formErrors)) {
+             activeTab.value = 'inventory'
+             return
+@@ -399,6 +443,7 @@
+             status,
+             state,
+             fifo_transaction,
++            analytic,
+         } = data
+         storeAdjustment.formData = {
+             id,
+@@ -413,6 +458,7 @@
+             financial_period_info: financial_period.period_title,
+             fifo_transaction: fifo_transaction?.id,
+             fifo_transaction_info: fifo_transaction,
++            analytic: createInventoryAnalytic(analytic),
+         }
+         inventoryID.value = data.id
+         await getInventoryByAdjustment(data.id)
+@@ -465,6 +511,7 @@
+                 fifo_transaction_info: item?.fifo_transaction ?? undefined,
+                 fifo_transaction: item?.fifo_transaction?.id ?? undefined,
+                 action: 'update',
++                analytic: createInventoryAnalytic(item?.analytic),
+             }))
+ 
+             if (params.value.page == 1) {
+@@ -496,6 +543,15 @@
+         storeSummaryData.employee.employee_info = val
+     }
+ 
++    const handleUpdateAnalytic = (data: any) => {
++        updateAnalytic(data)
++        analyticError.value = false
++    }
++
++    const handleGetApplicableCases = (data: any[]) => {
++        applicableCases.value = data
++    }
++
+     provide('transaction', { headers: storeAdjustment.tabItems[0].headers, apiService: ApiService.get })
+ 
+     const onAction = async (state: TState) => {
+diff --git a/src/modules/inventory/views/transaction/issue/form.vue b/src/modules/inventory/views/transaction/issue/form.vue
+index b64bbac8ae..0c560f0a63 100644
+--- a/src/modules/inventory/views/transaction/issue/form.vue
++++ b/src/modules/inventory/views/transaction/issue/form.vue
+@@ -81,6 +81,21 @@
+                     <v-tab value="inventory" :disabled="!storeIssue.formData.movement_type"> Inventory </v-tab>
+                     <v-tab value="approver"> Approvers </v-tab>
+                 </v-tabs>
++                <div v-show="activeTab === 'detail'">
++                    <base-dimension-btn
++                        v-if="analyticDomain"
++                        ref="analyticRef"
++                        :module="analyticDomain"
++                        :default-value="analyticDimension"
++                        :color="analyticError ? 'error' : 'primary'"
++                        variant="tonal"
++                        :rounded="2"
++                        :form-mode="formMode"
++                        :employee-id="storeIssue.formData.hr_employee"
++                        @save="handleUpdateAnalytic"
++                        @get-applicable-cases="handleGetApplicableCases"
++                    />
++                </div>
+             </div>
+             <v-window v-model="activeTab">
+                 <v-window-item value="detail">
+@@ -216,6 +231,8 @@
+                         :is-disable="storeIssue?.formData?.isDisable"
+                         :external_reference="storeIssue.formData.external_reference"
+                         :external_type="storeIssue.external_type"
++                        :applicable-cases="applicableCases"
++                        :has-analytic="analyticRef?.isActive"
+                         @on-save="transferData"
+                     />
+ 
+@@ -262,7 +279,7 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { ref, onMounted, onBeforeMount, provide, onBeforeUnmount, computed } from 'vue'
++    import { ref, onMounted, onBeforeMount, provide, onBeforeUnmount, computed, nextTick, toRef } from 'vue'
+     import { InventoryIssue, InventoryState } from '@@/inventory/services/transaction.service'
+     import {
+         useInventoryTransaction,
+@@ -281,7 +298,15 @@
+     import { AxiosUtils } from '@/utils/axios'
+     import State from '@@/inventory/components/transaction/State.vue'
+     import TransactionState from '@@/inventory/components/transaction/TransactionState.vue'
+-    import { CONTENT_TYPE, detailFields, inventoryFields, sessionKey, URL_PATH } from '@@/inventory/data'
++    import {
++        CONTENT_TYPE,
++        createInventoryAnalytic,
++        detailFields,
++        INVENTORY_ANALYTIC_DOMAIN,
++        inventoryFields,
++        sessionKey,
++        URL_PATH,
++    } from '@@/inventory/data'
+     import object from '@/utils/object'
+     import { useCustomToast } from '@/composables/useCustomToast'
+     import { POSITION, TYPE } from 'vue-toastification'
+@@ -294,6 +319,8 @@
+     import { len } from '@/utils/core'
+     import { useAppStore } from '@/atom/app/app.stores'
+     import { actionPermission, matchError } from '@@/inventory/helpers'
++    import BaseDimensionBtn from '@/components/Buttons/BaseDimensionBtn.vue'
++    import { useAnalytic } from '@/composables/useAnalytic'
+ 
+     const ApiService = new InventoryIssue()
+     const lookUpService = new lookupServices()
+@@ -307,6 +334,11 @@
+     const isLoadingInventory = ref(false)
+     const duplicateIssueKey = 'inventoryIssueDuplicateId'
+     const isDuplicatingIssue = ref(false)
++    const issueFormData = toRef(storeIssue, 'formData')
++    const { analyticDimension, analyticDomain, updateAnalytic } = useAnalytic(INVENTORY_ANALYTIC_DOMAIN, issueFormData)
++    const analyticRef = ref()
++    const analyticError = ref(false)
++    const applicableCases = ref<any[]>([])
+     type DuplicateOptions = {
+         duplicate?: boolean
+     }
+@@ -358,6 +390,7 @@
+             txn_dtl_content_type: data?.txn_dtl_content_type,
+             available_qty_uom: data?.available_qty_uom,
+             allow_negative: data?.allow_negative,
++            analytic: createInventoryAnalytic(data?.analytic),
+         }
+         if (store.formMode == 'create') {
+             // Push the new object to the inventories array
+@@ -410,6 +443,15 @@
+ 
+     const onSaved = form => {
+         const { formErrors } = form
++        if (formErrors.analytic) {
++            activeTab.value = 'detail'
++            analyticError.value = true
++            analyticRef.value?.openDialog()
++            nextTick(() => {
++                analyticRef.value?.submitForm()
++            })
++            return
++        }
+         if (matchError(inventoryFields, formErrors)) {
+             activeTab.value = 'inventory'
+             return
+@@ -441,6 +483,7 @@
+             external_type,
+             transaction_type,
+             external_reference,
++            analytic,
+         } = data
+         const transactionDate = isDuplicate ? format(new Date(), dateFormat) : transaction_date
+         const employeeId = isDuplicate ? store.employee.hr_employee : hr_employee?.id
+@@ -460,6 +503,7 @@
+             external_type,
+             transaction_type,
+             external_reference: isDuplicate ? null : external_reference,
++            analytic: createInventoryAnalytic(analytic),
+         }
+         inventoryID.value = data.id
+         await getInventoryByIssue(data.id, { duplicate: isDuplicate })
+@@ -541,6 +585,7 @@
+                 total_cost: item?.total_cost,
+                 txn_dtl_content_type: isDuplicate ? undefined : item.txn_dtl_content_type?.id,
+                 txn_dtl_object_id: isDuplicate ? undefined : item.txn_dtl_object_id,
++                analytic: createInventoryAnalytic(item?.analytic),
+             }))
+ 
+             if (params.value.page == 1) {
+@@ -647,6 +692,15 @@
+         storeSummaryData.employee.employee_info = val
+     }
+ 
++    const handleUpdateAnalytic = (data: any) => {
++        updateAnalytic(data)
++        analyticError.value = false
++    }
++
++    const handleGetApplicableCases = (data: any[]) => {
++        applicableCases.value = data
++    }
++
+     const appStore = useAppStore()
+     const children = appStore.getMenuByPath(URL_PATH.INVENTORY, [URL_PATH.TRANSACTIONS, URL_PATH.ISSUES])
+     const isEnableCard = computed(() => {
+diff --git a/src/modules/inventory/views/transaction/production/form.vue b/src/modules/inventory/views/transaction/production/form.vue
+index b22e3b70d7..270f3290f2 100644
+--- a/src/modules/inventory/views/transaction/production/form.vue
++++ b/src/modules/inventory/views/transaction/production/form.vue
+@@ -68,6 +68,21 @@
+                     <v-tab v-if="isItemHasSerial" value="serial" :loading="isFetchItemSerial"> Serial </v-tab>
+                     <v-tab value="approver"> Approvers </v-tab>
+                 </v-tabs>
++                <div v-show="activeTab === 'detail'">
++                    <base-dimension-btn
++                        v-if="analyticDomain"
++                        ref="analyticRef"
++                        :module="analyticDomain"
++                        :default-value="analyticDimension"
++                        :color="analyticError ? 'error' : 'primary'"
++                        variant="tonal"
++                        :rounded="2"
++                        :form-mode="formMode"
++                        :employee-id="store.formData.hr_employee"
++                        @save="handleUpdateAnalytic"
++                        @get-applicable-cases="handleGetApplicableCases"
++                    />
++                </div>
+             </div>
+             <v-window v-model="activeTab">
+                 <v-window-item value="detail" class="pt-3">
+@@ -387,6 +402,8 @@
+                 :active-tab="activeExtraTab"
+                 :stock-error-form="stockErrorForm"
+                 :non-stock-error-form="nonStockErrorForm"
++                :applicable-cases="applicableCases"
++                :has-analytic="analyticRef?.isActive"
+                 @discard="discard"
+                 @on-save="onSave"
+             />
+@@ -420,7 +437,8 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { ref, onMounted, onBeforeMount, provide, computed, onBeforeUnmount } from 'vue'
++    import { ref, onMounted, onBeforeMount, provide, computed, onBeforeUnmount, nextTick, toRef, watch } from 'vue'
++    import { storeToRefs } from 'pinia'
+     import {
+         useInventorySummaryData,
+         useInventoryProduction,
+@@ -442,6 +460,8 @@
+     import i18n from '@/plugins/i18n'
+     import {
+         CONTENT_TYPE,
++        createInventoryAnalytic,
++        INVENTORY_ANALYTIC_DOMAIN,
+         INVENTORY_IMAGE_HEADERS,
+         INVENTORY_STATUS_FILTER,
+         uomHeaders,
+@@ -465,12 +485,23 @@
+     import { API_BASE_URL } from '@/utils/api-base-url'
+     import itemPlaceholder from '@/assets/images/item-placeholder.png'
+     import { actionPermission, matchError } from '@@/inventory/helpers'
+-    import { mapper } from '@/utils/map'
++    import BaseDimensionBtn from '@/components/Buttons/BaseDimensionBtn.vue'
++    import { useAnalytic } from '@/composables/useAnalytic'
++    import WDGConfirmDialog from '@/components/WDG/ConfirmDialog.vue'
++    import cloneDeep from 'lodash/cloneDeep'
+ 
+     const ApiService = new InventoryProduction()
+     const storeSummaryData = useInventorySummaryData()
+     const store = useInventoryProduction()
+     const transactionStore = useInventoryTransaction()
++    const productionFormData = toRef(store, 'formData')
++    const { analyticDimension, analyticDomain, updateAnalytic } = useAnalytic(
++        INVENTORY_ANALYTIC_DOMAIN,
++        productionFormData
++    )
++    const analyticRef = ref()
++    const analyticError = ref(false)
++    const applicableCases = ref<any[]>([])
+     const apiLookupService = new lookupServices()
+     const activeTab = ref('detail')
+     const activeExtraTab = ref('stock')
+@@ -517,6 +548,12 @@
+ 
+     const stock_kits = ref([])
+     const non_stock_kits = ref([])
++    const createProductionLineAnalytic = (analytic?: Record<string, any> | null) =>
++        createInventoryAnalytic(
++            analytic ?? {
++                dimension: cloneDeep(store.formData.analytic?.dimension ?? {}),
++            }
++        )
+ 
+     const onFetchKit = async (id, kitType) => {
+         try {
+@@ -543,6 +580,7 @@
+                     is_replace: false,
+                     allow_replace: el?.allow_replace,
+                     id: undefined,
++                    analytic: createProductionLineAnalytic(el?.analytic),
+                 }))
+             }
+ 
+@@ -574,6 +612,7 @@
+             serial_file: el?.serial_file?.id,
+             is_replace: el?.is_replace,
+             allow_replace: el?.allow_replace,
++            analytic: createProductionLineAnalytic(el?.analytic),
+         }))
+     }
+ 
+@@ -627,30 +666,34 @@
+     const onSave = async data => {
+         // const isStockTab = activeTab.value === 'stock_kits';
+         const targetArray = activeExtraTab.value === 'stock_kits' ? stock_kits.value : non_stock_kits.value
++        const kitData = {
++            ...data,
++            analytic: createProductionLineAnalytic(data?.analytic),
++        }
+ 
+-        const isCreateMode = data?.formMode === 'create'
+-        const isEditChild = data?.tempAction === 'editChild'
++        const isCreateMode = kitData?.formMode === 'create'
++        const isEditChild = kitData?.tempAction === 'editChild'
+ 
+         const kits = store.formData[activeExtraTab.value]
+ 
+         if (isCreateMode) {
+             // Handling 'create' mode
+             if (isEditChild) {
+-                kits[store.indexItem] = data
+-                targetArray[store.indexItem] = data
++                kits[store.indexItem] = kitData
++                targetArray[store.indexItem] = kitData
+             } else {
+-                kits.push({ ...data, action: 'create', is_spec_component: false })
+-                targetArray.push(data)
++                kits.push({ ...kitData, action: 'create', is_spec_component: false })
++                targetArray.push(kitData)
+             }
+         } else {
+             // Handling 'update' mode
+ 
+-            if (data?.id) {
+-                kits[store.indexItem] = data
+-            } else if (data?.is_created === true) {
+-                kits[store.indexItem] = data
++            if (kitData?.id) {
++                kits[store.indexItem] = kitData
++            } else if (kitData?.is_created === true) {
++                kits[store.indexItem] = kitData
+             } else {
+-                kits.push({ ...data, action: 'create', is_created: true })
++                kits.push({ ...kitData, action: 'create', is_created: true })
+             }
+         }
+     }
+@@ -716,6 +759,15 @@
+     const nonStockErrorForm = ref({})
+     const onSaved = form => {
+         const { formErrors } = form
++        if (formErrors.analytic) {
++            activeTab.value = 'detail'
++            analyticError.value = true
++            analyticRef.value?.openDialog()
++            nextTick(() => {
++                analyticRef.value?.submitForm()
++            })
++            return
++        }
+         stockErrorForm.value = formErrors.stock_kits
+         nonStockErrorForm.value = formErrors.non_stock_kits
+         const keys = [
+@@ -793,6 +845,7 @@
+             location,
+             financial_period,
+             serial_file,
++            analytic,
+         } = data
+         store.formData = {
+             id,
+@@ -812,6 +865,7 @@
+             hr_employee: hr_employee?.id,
+             // product_quantity,
+             assembly_quantity: Number(assembly_qty),
++            analytic: createInventoryAnalytic(analytic),
+         }
+         store.info = {
+             hr_employee: hr_employee,
+@@ -1005,6 +1059,14 @@
+         storeSummaryData.employee.employee_info = val
+     }
+ 
++    const handleUpdateAnalytic = (data: any) => {
++        updateAnalytic(data)
++        analyticError.value = false
++    }
++    const handleGetApplicableCases = (data: any[]) => {
++        applicableCases.value = data
++    }
++
+     const $confirmDeleteDialogRef = ref<InstanceType<typeof WDGConfirmDialog>>()
+     const onChangeAssemblyType = async data => {
+         // check when should ask to clear data
+diff --git a/src/modules/inventory/views/transaction/receipt/form.vue b/src/modules/inventory/views/transaction/receipt/form.vue
+index 57cdcce60a..5fbb1db5b3 100644
+--- a/src/modules/inventory/views/transaction/receipt/form.vue
++++ b/src/modules/inventory/views/transaction/receipt/form.vue
+@@ -80,6 +80,21 @@
+                     <v-tab v-if="storeSummaryData.external_ref" value="issue">Issue</v-tab>
+                     <v-tab value="approver"> Approvers </v-tab>
+                 </v-tabs>
++                <div v-show="activeTab === 'detail'">
++                    <base-dimension-btn
++                        v-if="analyticDomain"
++                        ref="analyticRef"
++                        :module="analyticDomain"
++                        :default-value="analyticDimension"
++                        :color="analyticError ? 'error' : 'primary'"
++                        variant="tonal"
++                        :rounded="2"
++                        :form-mode="formMode"
++                        :employee-id="storeReceipt.formData.hr_employee"
++                        @save="handleUpdateAnalytic"
++                        @get-applicable-cases="handleGetApplicableCases"
++                    />
++                </div>
+             </div>
+             <v-window v-model="activeTab">
+                 <v-window-item value="detail" style="height: 50vh">
+@@ -204,6 +219,8 @@
+                         transaction_type="receipt"
+                         :external_type="storeReceipt?.formData?.external_type"
+                         :external_reference="storeReceipt?.formData?.external_reference"
++                        :applicable-cases="applicableCases"
++                        :has-analytic="analyticRef?.isActive"
+                         @on-save="transferData"
+                     />
+                     <div v-if="isLoadingInventory" class="d-flex justify-center">
+@@ -251,7 +268,7 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { ref, onMounted, onBeforeMount, provide, onBeforeUnmount, computed } from 'vue'
++    import { ref, onMounted, onBeforeMount, provide, onBeforeUnmount, computed, nextTick, toRef } from 'vue'
+     import { InventoryReceipt, InventoryState } from '@@/inventory/services/transaction.service'
+     import {
+         useInventoryTransaction,
+@@ -270,7 +287,15 @@
+     import Issue from './components/Issue.vue'
+     import TransactionState from '@@/inventory/components/transaction/TransactionState.vue'
+     import State from '@@/inventory/components/transaction/State.vue'
+-    import { CONTENT_TYPE, detailFields, inventoryFields, sessionKey, URL_PATH } from '@/modules/inventory/data'
++    import {
++        CONTENT_TYPE,
++        createInventoryAnalytic,
++        detailFields,
++        INVENTORY_ANALYTIC_DOMAIN,
++        inventoryFields,
++        sessionKey,
++        URL_PATH,
++    } from '@/modules/inventory/data'
+     import object from '@/utils/object'
+     import { useCustomToast } from '@/composables/useCustomToast'
+     import { POSITION, TYPE } from 'vue-toastification'
+@@ -282,6 +307,8 @@
+     import { format } from 'date-fns'
+     import { dateFormat } from '@/utils/date'
+     import { actionPermission, matchError } from '@@/inventory/helpers'
++    import BaseDimensionBtn from '@/components/Buttons/BaseDimensionBtn.vue'
++    import { useAnalytic } from '@/composables/useAnalytic'
+ 
+     const ApiService = new InventoryReceipt()
+     const lookUpService = new lookupServices()
+@@ -294,6 +321,14 @@
+     const formKey = ref(0)
+     const duplicateReceiptKey = 'inventoryReceiptDuplicateId'
+     const isDuplicatingReceipt = ref(false)
++    const receiptFormData = toRef(storeReceipt, 'formData')
++    const { analyticDimension, analyticDomain, updateAnalytic } = useAnalytic(
++        INVENTORY_ANALYTIC_DOMAIN,
++        receiptFormData
++    )
++    const analyticRef = ref()
++    const analyticError = ref(false)
++    const applicableCases = ref<any[]>([])
+     type DuplicateOptions = {
+         duplicate?: boolean
+     }
+@@ -336,6 +371,7 @@
+             from_location: data.from_location?.id,
+             from_location_info: data.from_location,
+             from_warehouse_info: data?.from_warehouse,
++            analytic: createInventoryAnalytic(data?.analytic),
+         }
+         if (store.formMode == 'create') {
+             // Push the new object to the inventories array
+@@ -378,6 +414,15 @@
+ 
+     const onSaved = form => {
+         const { formErrors } = form
++        if (formErrors.analytic) {
++            activeTab.value = 'detail'
++            analyticError.value = true
++            analyticRef.value?.openDialog()
++            nextTick(() => {
++                analyticRef.value?.submitForm()
++            })
++            return
++        }
+         if (matchError(inventoryFields, formErrors)) {
+             activeTab.value = 'inventory'
+             return
+@@ -414,6 +459,7 @@
+             transaction_type,
+             external_reference,
+             references = [],
++            analytic,
+         } = data
+         const transactionDate = isDuplicate ? format(new Date(), dateFormat) : transaction_date
+         const employeeId = isDuplicate ? store.employee.hr_employee : hr_employee?.id
+@@ -440,6 +486,7 @@
+                       content_type: r.content_type?.id,
+                   })),
+             issues: isDuplicate ? [] : references.flatMap(r => r.issue),
++            analytic: createInventoryAnalytic(analytic),
+         }
+         inventoryID.value = data.id
+         await getInventoryByReceipt(data.id, { duplicate: isDuplicate })
+@@ -536,6 +583,7 @@
+                 txn_dtl_object_id: isDuplicate ? undefined : item.txn_dtl_object_id,
+                 from_location_info: item.from_location,
+                 from_warehouse_info: item.from_warehouse,
++                analytic: createInventoryAnalytic(item?.analytic),
+             }))
+ 
+             if (params.value.page == 1) {
+@@ -639,6 +687,15 @@
+         storeSummaryData.employee.employee_info = val
+     }
+ 
++    const handleUpdateAnalytic = (data: any) => {
++        updateAnalytic(data)
++        analyticError.value = false
++    }
++
++    const handleGetApplicableCases = (data: any[]) => {
++        applicableCases.value = data
++    }
++
+     provide('transaction', { headers: storeReceipt.tabItems[0].headers, apiService: ApiService.get })
+ 
+     const { onGetStorage, onReadStorage, onClearStorage } = object.useStorage()
+diff --git a/src/modules/inventory/views/transaction/transfer/form.vue b/src/modules/inventory/views/transaction/transfer/form.vue
+index 8d973bc715..377098ff4e 100644
+--- a/src/modules/inventory/views/transaction/transfer/form.vue
++++ b/src/modules/inventory/views/transaction/transfer/form.vue
+@@ -86,6 +86,21 @@
+                     </v-tab>
+                     <v-tab value="approver"> Approvers </v-tab>
+                 </v-tabs>
++                <div v-show="activeTab === 'detail'">
++                    <base-dimension-btn
++                        v-if="analyticDomain"
++                        ref="analyticRef"
++                        :module="analyticDomain"
++                        :default-value="analyticDimension"
++                        :color="analyticError ? 'error' : 'primary'"
++                        variant="tonal"
++                        :rounded="2"
++                        :form-mode="formMode"
++                        :employee-id="storeTransfer.formData.hr_employee"
++                        @save="handleUpdateAnalytic"
++                        @get-applicable-cases="handleGetApplicableCases"
++                    />
++                </div>
+             </div>
+ 
+             <v-window v-model="activeTab">
+@@ -253,6 +268,9 @@
+                         :employee="store.employee.hr_employee"
+                         :data="storeTransfer.formData.inventories"
+                         :parent-form-mode="formMode"
++                        :form-errors="formErrors?.inventories"
++                        :applicable-cases="applicableCases"
++                        :has-analytic="analyticRef?.isActive"
+                         @on-save="transferData"
+                     />
+                     <div v-if="isLoadingInventory" class="d-flex justify-center">
+@@ -298,7 +316,7 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { ref, onMounted, provide, onBeforeMount, onBeforeUnmount, computed } from 'vue'
++    import { ref, onMounted, provide, onBeforeMount, onBeforeUnmount, computed, nextTick, toRef } from 'vue'
+     import { InventoryTransfer, InventoryState } from '@@/inventory/services/transaction.service'
+     import {
+         useInventoryTransaction,
+@@ -320,7 +338,13 @@
+     import { useCustomToast } from '@/composables/useCustomToast'
+     import { POSITION, TYPE } from 'vue-toastification'
+     import i18n from '@/plugins/i18n'
+-    import { CONTENT_TYPE, inventoryFields, URL_PATH } from '@@/inventory/data'
++    import {
++        CONTENT_TYPE,
++        createInventoryAnalytic,
++        INVENTORY_ANALYTIC_DOMAIN,
++        inventoryFields,
++        URL_PATH,
++    } from '@@/inventory/data'
+     import { useFormSetup } from '@/composables/useFormSetup'
+     import debounce from 'lodash/debounce'
+     import type { TState } from '@@/inventory/types/TInventory'
+@@ -329,6 +353,8 @@
+     import { dateFormat } from '@/utils/date'
+     import object from '@/utils/object'
+     import { actionPermission, matchError } from '@@/inventory/helpers'
++    import BaseDimensionBtn from '@/components/Buttons/BaseDimensionBtn.vue'
++    import { useAnalytic } from '@/composables/useAnalytic'
+ 
+     const ApiService = new InventoryTransfer()
+     const lookUpService = new lookupServices()
+@@ -348,6 +374,14 @@
+     const formKey = ref(0)
+     const duplicateTransferKey = 'inventoryTransferDuplicateId'
+     const isDuplicatingTransfer = ref(false)
++    const transferFormData = toRef(storeTransfer, 'formData')
++    const { analyticDimension, analyticDomain, updateAnalytic } = useAnalytic(
++        INVENTORY_ANALYTIC_DOMAIN,
++        transferFormData
++    )
++    const analyticRef = ref()
++    const analyticError = ref(false)
++    const applicableCases = ref<any[]>([])
+     type DuplicateOptions = {
+         duplicate?: boolean
+     }
+@@ -406,6 +440,7 @@
+             is_track_serial: data?.is_track_serial,
+             require_serial: data?.require_serial,
+             total_cost: data?.total_cost,
++            analytic: createInventoryAnalytic(data?.analytic),
+         }
+ 
+         if (store.formMode == 'create') {
+@@ -432,6 +467,7 @@
+             transfer_type,
+             external_type,
+             transaction_type,
++            analytic,
+         } = data
+         const transactionDate = isDuplicate ? format(new Date(), dateFormat) : transaction_date
+         const employeeId = isDuplicate ? store.employee.hr_employee : hr_employee?.id
+@@ -449,6 +485,7 @@
+             transfer_type,
+             external_type,
+             transaction_type,
++            analytic: createInventoryAnalytic(analytic),
+         }
+         inventoryID.value = data.id
+         await getInventoryByTransfer(data.id, { duplicate: isDuplicate })
+@@ -531,6 +568,7 @@
+                 require_serial: item?.item?.require_serial,
+                 action: isDuplicate ? 'create' : 'update',
+                 total_cost: item.total_cost,
++                analytic: createInventoryAnalytic(item?.analytic),
+             }))
+             if (params.value.page == 1) {
+                 storeTransfer.formData.inventories = formatInventoryData
+@@ -557,6 +595,15 @@
+ 
+     const onSaved = form => {
+         const { formErrors } = form
++        if (formErrors.analytic) {
++            activeTab.value = 'detail'
++            analyticError.value = true
++            analyticRef.value?.openDialog()
++            nextTick(() => {
++                analyticRef.value?.submitForm()
++            })
++            return
++        }
+         if (matchError(inventoryFields, formErrors)) {
+             activeTab.value = 'inventory'
+             return
+@@ -625,6 +672,15 @@
+         storeSummaryData.employee.employee_info = val
+     }
+ 
++    const handleUpdateAnalytic = (data: any) => {
++        updateAnalytic(data)
++        analyticError.value = false
++    }
++
++    const handleGetApplicableCases = (data: any[]) => {
++        applicableCases.value = data
++    }
++
+     const transferAction = actionPermission(URL_PATH.TRANSFER)
+     const { canPost, canRevoke } = transferAction
+     const showActionButton = computed(() => {
+diff --git a/src/modules/inventory/views/transaction/transfer_request/form.vue b/src/modules/inventory/views/transaction/transfer_request/form.vue
+index 4d2fb4ba13..ae2b2e8125 100644
+--- a/src/modules/inventory/views/transaction/transfer_request/form.vue
++++ b/src/modules/inventory/views/transaction/transfer_request/form.vue
+@@ -103,6 +103,21 @@
+                     <v-tab v-if="formMode != 'create'" value="transaction_info"> Transaction Information </v-tab>
+                     <v-tab value="approver"> Approvers </v-tab>
+                 </v-tabs>
++                <div v-show="activeTab === 'detail'">
++                    <base-dimension-btn
++                        v-if="analyticDomain"
++                        ref="analyticRef"
++                        :module="analyticDomain"
++                        :default-value="analyticDimension"
++                        :color="analyticError ? 'error' : 'primary'"
++                        variant="tonal"
++                        :rounded="2"
++                        :form-mode="formMode"
++                        :employee-id="storeTransferReq.formData.hr_employee"
++                        @save="handleUpdateAnalytic"
++                        @get-applicable-cases="handleGetApplicableCases"
++                    />
++                </div>
+             </div>
+ 
+             <v-window v-model="activeTab" class="overflow-visible">
+@@ -239,9 +254,11 @@
+                         :employee="store.employee.hr_employee"
+                         :data="storeTransferReq.formData.inventories"
+                         :parent-form-mode="formMode"
+-                        :form-errors="formErrors"
++                        :form-errors="formErrors?.inventories"
+                         :from-warehouse="from_warehouse"
+                         :to-warehouse="to_warehouse"
++                        :applicable-cases="applicableCases"
++                        :has-analytic="analyticRef?.isActive"
+                         @on-save="transferData"
+                     />
+                     <div v-if="isLoadingInventory" class="d-flex justify-center">
+@@ -396,7 +413,7 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { onBeforeMount, onBeforeUnmount, onMounted, provide, ref } from 'vue'
++    import { computed, nextTick, onBeforeMount, onBeforeUnmount, onMounted, provide, ref, toRef } from 'vue'
+     import { InventoryState, InventoryTransferReq } from '@@/inventory/services/transaction.service'
+     import { lookupServices } from '@@/inventory/services/baseLookUp.service'
+     import {
+@@ -420,7 +437,9 @@
+     import { capitalize, underscoreToCamel } from '@/utils/str.ts'
+     import {
+         CONTENT_TYPE,
++        createInventoryAnalytic,
+         inventoryFields,
++        INVENTORY_ANALYTIC_DOMAIN,
+         pathFromTransactionType,
+         URL_PATH,
+         warehouseHeaders,
+@@ -438,6 +457,8 @@
+     import object from '@/utils/object'
+     import { actionPermission, matchError } from '@@/inventory/helpers'
+     import { mapper } from '@/utils/map'
++    import BaseDimensionBtn from '@/components/Buttons/BaseDimensionBtn.vue'
++    import { useAnalytic } from '@/composables/useAnalytic'
+ 
+     const ApiService = new InventoryTransferReq()
+     const store = useInventoryTransaction()
+@@ -449,6 +470,14 @@
+     const route = useRoute()
+     const tabMenu = storeTransferReq.tabItems[route.meta.value]
+     const formKey = ref(0)
++    const transferReqFormData = toRef(storeTransferReq, 'formData')
++    const { analyticDimension, analyticDomain, updateAnalytic } = useAnalytic(
++        INVENTORY_ANALYTIC_DOMAIN,
++        transferReqFormData
++    )
++    const analyticRef = ref()
++    const analyticError = ref(false)
++    const applicableCases = ref<any[]>([])
+ 
+     const isLoadingInventory = ref(false)
+     const params = ref({
+@@ -493,6 +522,7 @@
+             is_track_serial: data?.is_track_serial,
+             require_serial: data?.require_serial,
+             request_qty: data?.request_qty,
++            analytic: createInventoryAnalytic(data?.analytic),
+         }
+ 
+         if (store.formMode == 'create') {
+@@ -520,6 +550,15 @@
+ 
+     const onSaved = form => {
+         const { formErrors } = form
++        if (formErrors.analytic) {
++            activeTab.value = 'detail'
++            analyticError.value = true
++            analyticRef.value?.openDialog()
++            nextTick(() => {
++                analyticRef.value?.submitForm()
++            })
++            return
++        }
+         if (matchError(inventoryFields, formErrors)) {
+             activeTab.value = 'inventory'
+             return
+@@ -543,6 +582,7 @@
+             state,
+             request_warehouse,
+             response_warehouse,
++            analytic,
+         } = data
+         storeTransferReq.formData = {
+             id,
+@@ -558,6 +598,7 @@
+             own_warehouse: request_warehouse?.id,
+             other_warehouse_info: response_warehouse,
+             other_warehouse: response_warehouse?.id,
++            analytic: createInventoryAnalytic(analytic),
+         }
+         inventoryID.value = data.id
+         await getInventoryByTransferReq(data.id)
+@@ -607,6 +648,7 @@
+                 is_track_serial: item?.item?.is_track_serial,
+                 require_serial: item?.item?.require_serial,
+                 action: 'update',
++                analytic: createInventoryAnalytic(item?.analytic),
+             }))
+ 
+             if (params.value.page == 1) {
+@@ -635,6 +677,15 @@
+         to_warehouse.value = data
+     }
+ 
++    const handleUpdateAnalytic = (data: any) => {
++        updateAnalytic(data)
++        analyticError.value = false
++    }
++
++    const handleGetApplicableCases = (data: any[]) => {
++        applicableCases.value = data
++    }
++
+     const selectType = data => {
+         if (!data) return
+         const isSaleTransfer = data === 'sale_transfer'
+-- 
+2.50.1.windows.1
+

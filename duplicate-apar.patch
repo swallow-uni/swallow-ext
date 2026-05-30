@@ -1,0 +1,363 @@
+diff --git forkSrcPrefix/src/helpers/form_helper.ts forkDstPrefix/src/helpers/form_helper.ts
+index 63a774ef53b2adc423ba548ca88e16da62089fd7..a431c2d31e13a4db5b28ec17b030af1e25d31427 100644
+--- forkSrcPrefix/src/helpers/form_helper.ts
++++ forkDstPrefix/src/helpers/form_helper.ts
+@@ -126,3 +126,24 @@ export const omitInfoFields = <T extends Record<string, any>>(
+     })
+   ) as Partial<T>
+ }
++
++export const duplicateFormObject = <T extends object>(
++  data: T,
++  options: {
++    omitKeys?: string[]
++    omitPrefixes?: string[]
++  } = {}
++): T => {
++  const { omitKeys = [], omitPrefixes = [] } = options
++  const duplicateData = { ...data }
++  const keys = new Set(['formErrors', ...omitKeys])
++  const prefixes = ['display_', ...omitPrefixes]
++
++  Object.keys(duplicateData).forEach((key) => {
++    if (keys.has(key) || prefixes.some((prefix) => key.startsWith(prefix))) {
++      delete (duplicateData as Record<string, unknown>)[key]
++    }
++  })
++
++  return duplicateData
++}
+diff --git forkSrcPrefix/src/modules/account-payable/views/configuration/vendor/form.vue forkDstPrefix/src/modules/account-payable/views/configuration/vendor/form.vue
+index bf39738059ea9da0345cf1425745fb6b54cdad55..91a422388bf432fd1691591b08daa5e19e1c10ed 100644
+--- forkSrcPrefix/src/modules/account-payable/views/configuration/vendor/form.vue
++++ forkDstPrefix/src/modules/account-payable/views/configuration/vendor/form.vue
+@@ -44,7 +44,7 @@
+ 
+ <script setup lang="ts">
+   import { vendorPure, vendorService } from '@@/account-payable/services/vendor.service'
+-  import { type Component, ref } from 'vue'
++  import { type Component, onBeforeUnmount, onMounted, ref } from 'vue'
+   import General from '@@/account-payable/views/configuration/vendor/components/General.vue'
+   import ContactPerson from '@@/account-payable/views/configuration/vendor/components/ContactPerson.vue'
+   import Location from '@@/account-payable/views/configuration/vendor/components/Location.vue'
+@@ -54,7 +54,11 @@
+   import { type ErrorTabMapping, useFormErrorTabs } from '@@/account-payable/composables/useFormErrorTabs'
+   import ShareHolder from '@@/account-payable/views/configuration/vendor/components/ShareHolder.vue'
+   import Attachment from 'wing_digital_web/Attachment'
++  import object from '@/utils/object'
++  import { duplicateFormObject } from '@/helpers/form_helper'
++  import { v4 as uuidv4 } from 'uuid'
+ 
++  const VENDOR_DUPLICATE_STORAGE_KEY = 'vendorId'
+   const formData = ref(vendorPure.createVendorFormData())
+ 
+   type VendorTabValue = typeof VENDOR_TABS[number]['value']
+@@ -108,4 +112,89 @@
+   function saved(form: { formErrors: Partial<VendorFormData> }) {
+     handleFormErrors(form.formErrors)
+   }
++
++  const emptyDuplicateContactFields = {
++    name: null,
++    company_legal_name: null,
++    tax_register_id: null,
++    contact_first_name: null,
++    contact_last_name: null,
++    contact_job_title: null,
++    contact_phone: null,
++    contact_phone2: null,
++    contact_email: null,
++    contact_website: null,
++  }
++
++  function createDuplicateVendorFormData(data: VendorFormData): VendorFormData {
++    return {
++      ...vendorPure.createVendorFormData(),
++      ...duplicateFormObject(data),
++      id: null,
++      code: null,
++      ...emptyDuplicateContactFields,
++      contact_person_vendors: (data.contact_person_vendors ?? []).map((contactPerson) => ({
++        ...vendorPure.createContactPersonVendorCreateOrUpdatePayload(),
++        ...duplicateFormObject(contactPerson),
++        id: null,
++      })),
++      contact_shareholders: (data.contact_shareholders ?? []).map((shareholder) => ({
++        ...vendorPure.createContactShareholderVendorCreateOrUpdatePayload(),
++        ...duplicateFormObject(shareholder),
++        id: null,
++      })),
++      account_vendor_bank_beneficiary_detail: (data.account_vendor_bank_beneficiary_detail ?? []).map(
++        (detail) => ({
++          ...vendorPure.createAccountVendorBankBeneficiaryDetailCreateOrUpdatePayload(),
++          ...duplicateFormObject(detail),
++          id: null,
++          uuid: uuidv4(),
++        })
++      ),
++      account_vendor_locations: (data.account_vendor_locations ?? []).map((location) => {
++        return {
++          ...vendorPure.createAccountVendorLocation(),
++          ...duplicateFormObject(location),
++          id: null,
++          uuid: uuidv4(),
++          code: null,
++          ...emptyDuplicateContactFields,
++          contact_person_vendors: (location.contact_person_vendors ?? []).map((contactPerson) => ({
++            ...vendorPure.createContactPersonVendorCreateOrUpdatePayload(),
++            ...duplicateFormObject(contactPerson),
++            id: null,
++          })),
++          contact_shareholders: (location.contact_shareholders ?? []).map((shareholder) => ({
++            ...vendorPure.createContactShareholderVendorCreateOrUpdatePayload(),
++            ...duplicateFormObject(shareholder),
++            id: null,
++          })),
++          account_vendor_bank_beneficiary_detail: (location.account_vendor_bank_beneficiary_detail ?? []).map(
++            (detail) => ({
++              ...vendorPure.createAccountVendorBankBeneficiaryDetailCreateOrUpdatePayload(),
++              ...duplicateFormObject(detail),
++              id: null,
++              uuid: uuidv4(),
++            })
++          ),
++        }
++      }),
++    }
++  }
++
++  const { onGetStorage, onReadStorage, onClearStorage } = object.useStorage()
++  onMounted(async () => {
++    const storage = onGetStorage(VENDOR_DUPLICATE_STORAGE_KEY)
++    if (storage === null) {
++      return
++    }
++
++    const id = onReadStorage(storage)
++    const { data } = await vendorService.read(id)
++    formData.value = createDuplicateVendorFormData(data as VendorFormData)
++  })
++
++  onBeforeUnmount(() => {
++    onClearStorage(VENDOR_DUPLICATE_STORAGE_KEY)
++  })
+ </script>
+diff --git forkSrcPrefix/src/modules/account-payable/views/configuration/vendor/index.vue forkDstPrefix/src/modules/account-payable/views/configuration/vendor/index.vue
+index 959319e418af9655ba3da31ef567cab416c2506b..6e65e488c2b20a48013634931e12e29d99d39e08 100644
+--- forkSrcPrefix/src/modules/account-payable/views/configuration/vendor/index.vue
++++ forkDstPrefix/src/modules/account-payable/views/configuration/vendor/index.vue
+@@ -1,7 +1,7 @@
+ <template>
+   <base-table
+     :headers="headers"
+-    :action-items="[{ type: 'edit' }]"
++    :action-items="[{ type: 'edit' }, { type: 'duplicate' }]"
+     :api-service="vendorService"
+     :exportable="true"
+     :title="$route.meta.title"
+@@ -12,6 +12,15 @@
+       <BooleanField :value="item.is_active" />
+     </template>
+ 
++    <template #_action_duplicate="{ item }">
++      <base-action-item
++        color="amber-darken-1"
++        icon="prime-clone"
++        title="Duplicate"
++        @click="onDuplicateItem(item)"
++      />
++    </template>
++
+     <template #display_create_date="{ item, search }">
+       <BaseTextPair v-bind="CREATED_LAST_MODIFIED_COLUMN.display_keys.display_create_date(item, search)" />
+     </template>
+@@ -26,6 +35,7 @@
+   import { ref } from 'vue'
+   import { vendorService } from '@@/account-payable/services/vendor.service'
+   import { CREATED_LAST_MODIFIED_COLUMN } from 'wing_digital_web/constants'
++  import object from '@/utils/object'
+ 
+   const headers = ref([
+     {
+@@ -84,6 +94,17 @@
+       fieldType: 'boolean',
+     },
+   ])
++
++  const router = useRouter()
++  const onDuplicateItem = async (item: any) => {
++    const { onSetStorage } = object.useStorage()
++    onSetStorage('vendorId', item.id)
++    const createRoute = router.resolve({
++      name: 'VENDOR.create',
++    })
++
++    await router.push(createRoute)
++  }
+ </script>
+ 
+ <style scoped></style>
+diff --git forkSrcPrefix/src/modules/account-receivable/views/configuration/customer/components/Location.vue forkDstPrefix/src/modules/account-receivable/views/configuration/customer/components/Location.vue
+index a5b833e9bccd30c208d831b05381d74f7f53e21d..122e08f0bc1afb31ab5cd010aadfce41d3f3963c 100644
+--- forkSrcPrefix/src/modules/account-receivable/views/configuration/customer/components/Location.vue
++++ forkDstPrefix/src/modules/account-receivable/views/configuration/customer/components/Location.vue
+@@ -176,8 +176,10 @@
+     }
+     const customerLocations = formData.value.customer_locations
+     if (formItem.is_main_location) {
++      const formItemIdentifier = formItem.uuid ?? formItem.id
+       const updatedLocations = _.map(customerLocations, (item: any) => {
+-        if (item?.id !== formItem.id) {
++        const itemIdentifier = item?.uuid ?? item?.id
++        if (itemIdentifier !== formItemIdentifier) {
+           return { ...item, is_main_location: false }
+         }
+         return item
+diff --git forkSrcPrefix/src/modules/account-receivable/views/configuration/customer/form.vue forkDstPrefix/src/modules/account-receivable/views/configuration/customer/form.vue
+index a33556003ae1c6ec390233397baf50557d5ac0fc..eca07e99897ba2f9b85ed9bd5df24618f2b7939e 100644
+--- forkSrcPrefix/src/modules/account-receivable/views/configuration/customer/form.vue
++++ forkDstPrefix/src/modules/account-receivable/views/configuration/customer/form.vue
+@@ -1,5 +1,5 @@
+ <script setup lang="ts">
+-    import { type Component, onBeforeMount, onBeforeUnmount, ref } from 'vue'
++    import { type Component, onBeforeMount, onBeforeUnmount, onMounted, ref } from 'vue'
+     import { type ErrorTabMapping, useFormErrorTabs } from '@@/account-receivable/composables/useFormErrorTabs'
+     import { useAccountReceivableCustomerStore } from '@/modules/account-receivable/store/config.store'
+     import { ConfigCustomerService } from '@/modules/account-receivable/services/config.service'
+@@ -15,10 +15,14 @@
+     import AccountHolder from '@@/account-receivable/views/configuration/customer/components/AccountHolder.vue'
+     import PaymentSetting from '@@/account-receivable/views/configuration/customer/components/PaymentSetting.vue'
+     import GeneralLedger from '@@/account-receivable/views/configuration/customer/components/GeneralLedger.vue'
++    import object from '@/utils/object'
++    import { duplicateFormObject } from '@/helpers/form_helper'
++    import { v4 as uuidv4 } from 'uuid'
+ 
+     const store = useAccountReceivableCustomerStore()
+     const crmStore = useAccountReceivableStore()
+ 
++    const CUSTOMER_DUPLICATE_STORAGE_KEY = 'customerId'
+     const customerService = new ConfigCustomerService()
+     const formData = ref(store.customerFormData)
+ 
+@@ -168,11 +172,68 @@
+         }
+     }
+ 
++    function createDuplicateContactPerson(contactPerson: any) {
++        return {
++            ...duplicateFormObject(contactPerson, { omitKeys: ['id', 'uuid', 'customer'] }),
++            customer: 0,
++        }
++    }
++
++    const emptyDuplicateContactFields = {
++        name: null,
++        tax_register_id: null,
++        primary_legal_name: null,
++        secondary_legal_name: null,
++        contact_first_name: null,
++        contact_last_name: null,
++        contact_job_title: null,
++        contact_phone: null,
++        contact_phone2: null,
++        contact_email: null,
++        contact_website: null,
++    }
++
++    function createDuplicateCustomerLocation(location: any) {
++        return {
++            ...cloneDeep(store.customerLocation),
++            ...duplicateFormObject(location, { omitKeys: ['id', 'uuid', 'customer'] }),
++            uuid: uuidv4(),
++            code: null,
++            ...emptyDuplicateContactFields,
++            contact_persons: (location.contact_persons ?? []).map(createDuplicateContactPerson),
++        }
++    }
++
++    function createDuplicateCustomerFormData(data: TCustomerFormData): TCustomerFormData {
++        return {
++            ...cloneDeep(store.customerFormData),
++            ...duplicateFormObject(data, { omitKeys: ['id', 'uuid', 'business_account'] }),
++            code: null,
++            ...emptyDuplicateContactFields,
++            contact_persons: (data.contact_persons ?? []).map(createDuplicateContactPerson),
++            customer_locations: (data.customer_locations ?? []).map(createDuplicateCustomerLocation),
++        } as TCustomerFormData
++    }
++
++    const { onGetStorage, onReadStorage, onClearStorage } = object.useStorage()
++    onMounted(async () => {
++        const storage = onGetStorage(CUSTOMER_DUPLICATE_STORAGE_KEY)
++        if (storage === null) {
++            return
++        }
++
++        const id = onReadStorage(storage)
++        const { data } = await customerService.read(id)
++        await onRead(data)
++        formData.value = createDuplicateCustomerFormData(formData.value)
++    })
++
+     onBeforeMount(() => {
+         store.$reset()
+     })
+ 
+     onBeforeUnmount(() => {
++        onClearStorage(CUSTOMER_DUPLICATE_STORAGE_KEY)
+         store.$reset()
+     })
+ </script>
+diff --git forkSrcPrefix/src/modules/account-receivable/views/configuration/customer/index.vue forkDstPrefix/src/modules/account-receivable/views/configuration/customer/index.vue
+index af4b6c45c38b215cc0d23b56a8a89ca934e1e521..b8509592cd5c3ba0283affa69a613870058f88a4 100644
+--- forkSrcPrefix/src/modules/account-receivable/views/configuration/customer/index.vue
++++ forkDstPrefix/src/modules/account-receivable/views/configuration/customer/index.vue
+@@ -2,6 +2,7 @@
+   import { ref } from 'vue'
+   import { ConfigCustomerService } from '@/modules/account-receivable/services/config.service'
+   import { CREATED_LAST_MODIFIED_COLUMN } from 'wing_digital_web/constants'
++  import object from '@/utils/object'
+ 
+   const customerService = new ConfigCustomerService()
+ 
+@@ -46,12 +47,23 @@
+     },
+     ...CREATED_LAST_MODIFIED_COLUMN.columns,
+   ])
++
++  const router = useRouter()
++  const onDuplicateItem = async (item: any) => {
++    const { onSetStorage } = object.useStorage()
++    onSetStorage('customerId', item.id)
++    const createRoute = router.resolve({
++      name: 'account-receivable-customer.create',
++    })
++
++    await router.push(createRoute)
++  }
+ </script>
+ 
+ <template>
+   <base-table
+     :headers="headers"
+-    :action-items="[{ type: 'edit' }, { type: 'delete' }]"
++    :action-items="[{ type: 'edit' }, { type: 'delete' }, { type: 'duplicate' }]"
+     :api-service="customerService"
+     :exportable="true"
+     :title="$route.meta.title"
+@@ -61,6 +73,15 @@
+       <BooleanField :value="item.is_active" />
+     </template>
+ 
++    <template #_action_duplicate="{ item }">
++      <base-action-item
++        color="amber-darken-1"
++        icon="prime-clone"
++        title="Duplicate"
++        @click="onDuplicateItem(item)"
++      />
++    </template>
++
+     <template #display_create_date="{ item: tableItem, search }">
+       <BaseTextPair v-bind="CREATED_LAST_MODIFIED_COLUMN.display_keys.display_create_date(tableItem, search)" />
+     </template>

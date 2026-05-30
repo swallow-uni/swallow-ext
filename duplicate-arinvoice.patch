@@ -1,0 +1,299 @@
+From 17e413793e85a8eaac4746acc9a82b9da2e52a88 Mon Sep 17 00:00:00 2001
+From: Shisun <worlddominator007@gmail.com>
+Date: Sat, 30 May 2026 12:06:30 +0700
+Subject: [PATCH] duplicate arinvoice
+
+---
+ .../useAccountReceivableDuplicate.ts          | 69 ++++++++++++++
+ .../transaction/invoice/components/Form.vue   | 95 ++++++++++++-------
+ .../views/transaction/invoice/index.vue       | 42 +++++++-
+ 3 files changed, 171 insertions(+), 35 deletions(-)
+ create mode 100644 src/modules/account-receivable/composables/useAccountReceivableDuplicate.ts
+
+diff --git a/src/modules/account-receivable/composables/useAccountReceivableDuplicate.ts b/src/modules/account-receivable/composables/useAccountReceivableDuplicate.ts
+new file mode 100644
+index 0000000..b7db234
+--- /dev/null
++++ b/src/modules/account-receivable/composables/useAccountReceivableDuplicate.ts
+@@ -0,0 +1,69 @@
++import { v4 as uuidv4 } from 'uuid'
++import { duplicateFormObject } from '@/helpers/form_helper'
++import { accountReceivableInvoicePure } from '@@/account-receivable/services/account-receivable-invoice.service'
++import type {
++  AccountReceivableFormData,
++  AccountReceivableReadResponseTransformed,
++  ItemDetailTransformed,
++} from '@@/account-receivable/types/account-receivable-invoice.type'
++
++export const ACCOUNT_RECEIVABLE_DUPLICATE_STORAGE_KEY = 'accountReceivableDuplicateId'
++
++type AccountReceivableTransactionType = 'invoice' | 'sale_invoice'
++
++const duplicateItemDetailOmitKeys = ['id', 'uuid', 'object_id', 'content_type', 'item_detail_taxes']
++
++const duplicateAccountReceivableOmitKeys = [
++  'id',
++  'reference_no',
++  'create_date',
++  'file_counts',
++  'files',
++  'file',
++  'file_info',
++  'file_delete',
++  'detail_taxes',
++  'payment_applications',
++  'payment_state',
++  'prepayment_amount',
++  'total_after_discount',
++  'total_balance',
++  'total_open_balance',
++  'total_tax',
++  'total_tax_incl',
++  'total_untaxed',
++  'state',
++  'status',
++  'journal',
++  'actions',
++  'object_id',
++  'content_type',
++  'external_reference',
++  'is_correction',
++  'parent',
++]
++
++export function useAccountReceivableDuplicate() {
++  function createDuplicateItemDetail(itemDetail: ItemDetailTransformed): ItemDetailTransformed {
++    return {
++      ...accountReceivableInvoicePure.createItemDetail(),
++      ...duplicateFormObject(itemDetail, { omitKeys: duplicateItemDetailOmitKeys }),
++      uuid: uuidv4(),
++    }
++  }
++
++  function createDuplicateAccountReceivableFormData(
++    data: AccountReceivableReadResponseTransformed,
++    transactionType: AccountReceivableTransactionType
++  ): AccountReceivableFormData {
++    return {
++      ...accountReceivableInvoicePure.createAccountReceivableFormData({ transactionType }),
++      ...duplicateFormObject(data, { omitKeys: duplicateAccountReceivableOmitKeys }),
++      item_details: (data.item_details ?? []).map(createDuplicateItemDetail),
++    }
++  }
++
++  return {
++    createDuplicateAccountReceivableFormData,
++  }
++}
+diff --git a/src/modules/account-receivable/views/transaction/invoice/components/Form.vue b/src/modules/account-receivable/views/transaction/invoice/components/Form.vue
+index 8ac60aa..6454792 100644
+--- a/src/modules/account-receivable/views/transaction/invoice/components/Form.vue
++++ b/src/modules/account-receivable/views/transaction/invoice/components/Form.vue
+@@ -307,7 +307,7 @@
+     defaultAccountReceivableSaleInvoiceHeaders,
+   } from '@@/account-receivable/services/account-receivable-invoice.service'
+   import { useRoute, useRouter } from 'vue-router'
+-  import { computed, nextTick, onMounted, provide, ref, watch } from 'vue'
++  import { computed, nextTick, onBeforeMount, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
+   import Detail from '@@/account-receivable/views/transaction/invoice/components/Detail.vue'
+   import Item from '@@/account-receivable/views/transaction/invoice/components/Item.vue'
+   import CustomerInfo from '@@/account-receivable/views/transaction/invoice/components/CustomerInfo.vue'
+@@ -337,6 +337,10 @@
+   import { useAnalytic } from 'wing_digital_web/composables'
+   import { PATHS } from '@@/account-receivable/data/constants'
+   import { hasPermissionAction } from 'wing_digital_web/helpers'
++  import {
++    ACCOUNT_RECEIVABLE_DUPLICATE_STORAGE_KEY,
++    useAccountReceivableDuplicate,
++  } from '@@/account-receivable/composables/useAccountReceivableDuplicate'
+ 
+   export type RouteName = 'ACCOUNT_RECEIVABLE_INVOICE' | 'SALE_INVOICE'
+ 
+@@ -405,6 +409,7 @@
+   })
+ 
+   const formData = ref(accountReceivableInvoicePure.createAccountReceivableFormData({ transactionType: transactionType.value }))
++  const { createDuplicateAccountReceivableFormData } = useAccountReceivableDuplicate()
+ 
+   const dirtyStateChecker = useDirtyStateChecker(formData)
+   const confirmDialogRef = ref()
+@@ -877,46 +882,70 @@
+ 
+   const { onGetStorage, onReadStorage, onClearStorage } = object.useStorage()
+   onMounted(async () => {
+-    if (formMode.value === 'create') {
+-      formData.value.financial_period = await findCurrentFinancialPeriod()
+-      const storage = onGetStorage(INVOICE_KEY)
+-      if (storage !== null) {
+-        const data: TSaleShipmentSession = onReadStorage(storage)
+-        const saleOrder = data?.saleOrder
+-        if (data) {
+-          formData.value.branch = saleOrder?.branch ?? null
+-          formData.value.ledger = saleOrder?.ledger ?? null
+-          formData.value.customer_reference = saleOrder?.customer_reference ?? ''
+-          formData.value.discount_type = saleOrder?.discount_type ?? null
+-          formData.value.total_discount = saleOrder?.total_discount ?? '0.00'
+-          formData.value.prepayment_balance = saleOrder?.prepayment_balance ?? '0.00'
+-          formData.value.description = saleOrder?.description ?? ''
+-          formData.value.is_global_discount_item = saleOrder.is_global_discount_item ?? false
+-          formData.value.external_reference = data?.shipment_reference_no
+-          formData.value.object_id = data?.shipment_id
+-          formData.value.content_type = data?.content_type
+-          formData.value.customer = data?.customer_info?.id ?? null
+-          formData.value.customer_info = (data?.customer_info ?? null) as Customer
+-          formData.value.item_details = [...(data?.items ?? [])] as unknown as ItemDetailTransformed[]
++    try {
++      shouldInvokeUpdateModelValueEvent.value = false
++
++      if (formMode.value === 'create') {
++        formData.value.financial_period = await findCurrentFinancialPeriod()
++        const duplicateStorage = onGetStorage(ACCOUNT_RECEIVABLE_DUPLICATE_STORAGE_KEY)
++        if (duplicateStorage !== null) {
++          const id = onReadStorage(duplicateStorage)
++          const { data } = await activeService.value.read(String(id))
++          if (!data.object_id) {
++            formData.value = createDuplicateAccountReceivableFormData(
++              data as AccountReceivableReadResponseTransformed,
++              transactionType.value
++            )
++            formData.value.financial_period = await findCurrentFinancialPeriod()
++            await updateDueDate()
++          }
++        } else {
++          const storage = onGetStorage(INVOICE_KEY)
++          if (storage !== null) {
++            const data: TSaleShipmentSession = onReadStorage(storage)
++            const saleOrder = data?.saleOrder
++            if (data) {
++              formData.value.branch = saleOrder?.branch ?? null
++              formData.value.ledger = saleOrder?.ledger ?? null
++              formData.value.customer_reference = saleOrder?.customer_reference ?? ''
++              formData.value.discount_type = saleOrder?.discount_type ?? null
++              formData.value.total_discount = saleOrder?.total_discount ?? '0.00'
++              formData.value.prepayment_balance = saleOrder?.prepayment_balance ?? '0.00'
++              formData.value.description = saleOrder?.description ?? ''
++              formData.value.is_global_discount_item = saleOrder.is_global_discount_item ?? false
++              formData.value.external_reference = data?.shipment_reference_no
++              formData.value.object_id = data?.shipment_id
++              formData.value.content_type = data?.content_type
++              formData.value.customer = data?.customer_info?.id ?? null
++              formData.value.customer_info = (data?.customer_info ?? null) as Customer
++              formData.value.item_details = [...(data?.items ?? [])] as unknown as ItemDetailTransformed[]
++            }
++          }
++          if (route.query.invoiceId) {
++            const response = await accountReceivableInvoiceService.read(String(route.query.invoiceId))
++            const data: AccountReceivableReadResponseTransformed = response.data
++            formData.value = data
++            formData.value.is_correction = true
++            formData.value.parent = data.id ?? null
++          }
+         }
++        await computeItem()
++        dirtyStateChecker.setInitialData(formData)
+       }
+-      if (route.query.invoiceId) {
+-        const response = await accountReceivableInvoiceService.read(String(route.query.invoiceId))
+-        const data: AccountReceivableReadResponseTransformed = response.data
+-        formData.value = data
+-        formData.value.is_correction = true
+-        formData.value.parent = data.id ?? null
+-      }
+-      await computeItem()
+-      dirtyStateChecker.setInitialData(formData)
++
++      await setDefaultValueForApprovalWorkFlow(editingId.value)
++      await setDefaultValueForWorkflowAccess(editingId.value)
++    } catch (error) {
++      console.error(error)
++    } finally {
++      shouldInvokeUpdateModelValueEvent.value = true
+     }
+-    await setDefaultValueForApprovalWorkFlow(editingId.value)
+-    await setDefaultValueForWorkflowAccess(editingId.value)
+   })
+ 
+   onBeforeUnmount(() => {
+     AxiosUtils.removeHeader('wdg-url-path')
+     onClearStorage(INVOICE_KEY)
++    onClearStorage(ACCOUNT_RECEIVABLE_DUPLICATE_STORAGE_KEY)
+   })
+ 
+   provide('transaction', {
+diff --git a/src/modules/account-receivable/views/transaction/invoice/index.vue b/src/modules/account-receivable/views/transaction/invoice/index.vue
+index d04bc2e..a434246 100644
+--- a/src/modules/account-receivable/views/transaction/invoice/index.vue
++++ b/src/modules/account-receivable/views/transaction/invoice/index.vue
+@@ -6,7 +6,7 @@
+     :route-group="activeTab.routeGroup"
+     :get-service-key="activeTab.getServiceKey"
+     :link-tabs="activeChildren"
+-    :action-items="[{ type: 'edit' }, { type: 'delete' }]"
++    :action-items="[{ type: 'edit' }, { type: 'delete' }, { type: 'duplicate' }]"
+     :api-service="activeService"
+     :exportable="true"
+     :title="$route.meta.title"
+@@ -108,7 +108,25 @@
+     </template>
+ 
+     <template #action="{ item: tableItem }">
+-      <div v-if="!(tableItem.status === 'draft')" />
++      <div v-if="tableItem.status !== $consts.APPROVAL_STATUS.DRAFT && !canDuplicateItem(tableItem)" />
++    </template>
++
++    <template #_action_edit="{ item: tableItem }">
++      <div v-if="tableItem.status !== $consts.APPROVAL_STATUS.DRAFT" />
++    </template>
++
++    <template #_action_delete="{ item: tableItem }">
++      <div v-if="tableItem.status !== $consts.APPROVAL_STATUS.DRAFT" />
++    </template>
++
++    <template #_action_duplicate="{ item: tableItem }">
++      <base-action-item
++        v-if="canDuplicateItem(tableItem)"
++        color="amber-darken-1"
++        icon="prime-clone"
++        title="Duplicate"
++        @click="onDuplicateItem(tableItem)"
++      />
+     </template>
+ 
+     <template #tableActions>
+@@ -171,6 +189,8 @@
+   import { accountReceivableSaleInvoiceService } from '@@/account-receivable/services/account-receivable-sale-invoice.service'
+   import { getMenuTabs } from 'wing_digital_web/helpers'
+   import { CREATED_LAST_MODIFIED_COLUMN } from 'wing_digital_web/constants'
++  import object from '@/utils/object'
++  import { ACCOUNT_RECEIVABLE_DUPLICATE_STORAGE_KEY } from '@@/account-receivable/composables/useAccountReceivableDuplicate'
+ 
+   const route = useRoute()
+   const appStore = useAppStore()
+@@ -302,6 +322,24 @@
+     return (route.name as string).split('.')[0]
+   })
+ 
++  const canDuplicateItem = (item: AccountReceivableReadResponse) => {
++    return !item.object_id
++  }
++
++  const onDuplicateItem = async (item: AccountReceivableReadResponse) => {
++    if (!canDuplicateItem(item)) {
++      return
++    }
++
++    const { onSetStorage } = object.useStorage()
++    onSetStorage(ACCOUNT_RECEIVABLE_DUPLICATE_STORAGE_KEY, item.id)
++    const createRoute = router.resolve({
++      name: `${routeGroup.value}.create`,
++    })
++
++    await router.push(createRoute)
++  }
++
+   const viewDetailData = computed(() => ({
+     header: {
+       details: [
+-- 
+2.50.1.windows.1
+
