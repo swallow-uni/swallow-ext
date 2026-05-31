@@ -1,0 +1,591 @@
+From e22475547740b79811a795e0f742212bfcfbb430 Mon Sep 17 00:00:00 2001
+From: "vyrapol.vutha" <vyrapol.vutha@wingbank.com.kh>
+Date: Mon, 1 Jun 2026 00:37:08 +0700
+Subject: [PATCH] enhance: summary warehouse filter serial
+
+---
+ .../reports/components/Aggrid/BaseAggrid.vue  |  24 ++
+ ...ventory-summary-warehouse-history.store.ts | 168 ++++++-----
+ .../index.vue                                 | 282 +++++++++++++-----
+ 3 files changed, 323 insertions(+), 151 deletions(-)
+
+diff --git a/src/modules/reports/components/Aggrid/BaseAggrid.vue b/src/modules/reports/components/Aggrid/BaseAggrid.vue
+index 938ed978..de1f0387 100644
+--- a/src/modules/reports/components/Aggrid/BaseAggrid.vue
++++ b/src/modules/reports/components/Aggrid/BaseAggrid.vue
+@@ -257,6 +257,10 @@ const props = defineProps({
+     type: Function,
+     default: null,
+   },
++  clearTrigger: {
++    type: String,
++    default: '',
++  },
+ })
+ 
+ const $emits = defineEmits(['synchronize'])
+@@ -829,6 +833,17 @@ async function loadData() {
+   }
+ }
+ 
++function clearData() {
++  progressing.value = 0
++  currentPage.value = 1
++  totalPages.value = 1
++  totalRecords.value = 0
++  gridApi.value?.setFilterModel(null)
++  rowData.value = []
++  stopWorker()
++  setLoading(false)
++}
++
+ const exportStore = ref(RAW_STORE)
+ const syncFilteredRows = debounce(async ({ api }) => {
+   if (chunkLoading.value || !props.isExportBigData) {
+@@ -1649,6 +1664,15 @@ watch(
+   }
+ )
+ 
++watch(
++  () => props.clearTrigger,
++  (newValue: string) => {
++    if (newValue) {
++      clearData()
++    }
++  }
++)
++
+ watch(
+   () => manualFetchType.value,
+   (newValue: string) => {
+diff --git a/src/modules/reports/store/inventory/inventory-summary-warehouse-history.store.ts b/src/modules/reports/store/inventory/inventory-summary-warehouse-history.store.ts
+index b309793a..f5238a0b 100644
+--- a/src/modules/reports/store/inventory/inventory-summary-warehouse-history.store.ts
++++ b/src/modules/reports/store/inventory/inventory-summary-warehouse-history.store.ts
+@@ -6,85 +6,95 @@ export const inventorySummaryWarehouseHistory = defineStore(
+   'inventorySummaryWarehouseHistory',
+   () => {
+     const groupFields = ref<string[]>(['warehouse_code', 'warehouse_name'])
+-    const headers: ITableHeaders[] = mapHeaders([
+-      {
+-        title: 'Warehouse Code',
+-        key: 'warehouse_code',
+-        align: 'start',
+-        filterable: true,
+-        path: 'warehouse_code',
+-      },
+-      {
+-        title: 'Warehouse Name',
+-        key: 'warehouse_name',
+-        align: 'start',
+-        path: 'warehouse_name',
+-        filterable: true,
+-      },
+-      {
+-        title: 'Item Class Code',
+-        key: 'item_class_code',
+-        align: 'start',
+-        filterable: true,
+-        path: 'item_class_code',
+-      },
+-      {
+-        title: 'Item Class',
+-        key: 'item_class',
+-        align: 'start',
+-        filterable: true,
+-        path: 'item_class',
+-      },
+-      {
+-        title: 'Inventory Code',
+-        key: 'inventory_code',
+-        align: 'start',
+-        filterable: true,
+-        path: 'inventory_code',
+-      },
+-      {
+-        title: 'Inventory Item',
+-        key: 'inventory_item',
+-        align: 'start',
+-        filterable: true,
+-        path: 'inventory_item',
+-      },
+-      {
+-        title: 'UOM',
+-        key: 'uom',
+-        align: 'start',
+-        filterable: true,
+-        path: 'uom',
+-      },
+-      {
+-        title: 'Beginning Stock',
+-        key: 'display_beginning_stock',
+-        align: 'start',
+-        filterable: true,
+-        path: 'beginning_stock',
+-      },
+-      {
+-        title: 'Stock In',
+-        key: 'display_stock_in',
+-        align: 'start',
+-        filterable: true,
+-        path: 'stock_in',
+-      },
+-      {
+-        title: 'Stock Out',
+-        key: 'display_stock_out',
+-        align: 'start',
+-        filterable: true,
+-        path: 'stock_out',
+-      },
+-      {
+-        title: 'Ending Stock',
+-        key: 'display_ending_stock',
+-        align: 'start',
+-        filterable: true,
+-        path: 'ending_stock',
+-      },
+-    ], groupFields.value)
++    const headers: ITableHeaders[] = mapHeaders(
++      [
++        {
++          title: 'Warehouse Code',
++          key: 'warehouse_code',
++          align: 'start',
++          filterable: true,
++          path: 'warehouse_code',
++        },
++        {
++          title: 'Warehouse Name',
++          key: 'warehouse_name',
++          align: 'start',
++          path: 'warehouse_name',
++          filterable: true,
++        },
++        {
++          title: 'Item Class Code',
++          key: 'item_class_code',
++          align: 'start',
++          filterable: true,
++          path: 'item_class_code',
++        },
++        {
++          title: 'Item Class',
++          key: 'item_class',
++          align: 'start',
++          filterable: true,
++          path: 'item_class',
++        },
++        {
++          title: 'Inventory Code',
++          key: 'inventory_code',
++          align: 'start',
++          filterable: true,
++          path: 'inventory_code',
++        },
++        {
++          title: 'Inventory Item',
++          key: 'inventory_item',
++          align: 'start',
++          filterable: true,
++          path: 'inventory_item',
++        },
++        {
++          title: 'Serial Number',
++          key: 'serial',
++          align: 'start',
++          filterable: true,
++          path: 'serial',
++        },
++        {
++          title: 'UOM',
++          key: 'uom',
++          align: 'start',
++          filterable: true,
++          path: 'uom',
++        },
++        {
++          title: 'Beginning Stock',
++          key: 'display_beginning_stock',
++          align: 'start',
++          filterable: true,
++          path: 'beginning_stock',
++        },
++        {
++          title: 'Stock In',
++          key: 'display_stock_in',
++          align: 'start',
++          filterable: true,
++          path: 'stock_in',
++        },
++        {
++          title: 'Stock Out',
++          key: 'display_stock_out',
++          align: 'start',
++          filterable: true,
++          path: 'stock_out',
++        },
++        {
++          title: 'Ending Stock',
++          key: 'display_ending_stock',
++          align: 'start',
++          filterable: true,
++          path: 'ending_stock',
++        },
++      ],
++      groupFields.value
++    )
+ 
+     const warehouse = ref([])
+     const warehouse_info = ref([])
+diff --git a/src/modules/reports/views/inventory/inventory-summary-warehouse-history/index.vue b/src/modules/reports/views/inventory/inventory-summary-warehouse-history/index.vue
+index c3d143d3..cbe56b33 100644
+--- a/src/modules/reports/views/inventory/inventory-summary-warehouse-history/index.vue
++++ b/src/modules/reports/views/inventory/inventory-summary-warehouse-history/index.vue
+@@ -43,8 +43,17 @@ const {
+ const agStore$ = useAggridStore()
+ const store = inventorySummaryWarehouseHistory()
+ const manualFetch = ref(0)
++const clearGridTrigger = ref(0)
++const includeSerial = ref(false)
++const serial = ref('')
++const serialFilterMessage = ref({
++  warehouse: '',
++  items: '',
++})
+ const appStore = useAppStore()
+ 
++const serialText = computed(() => String(serial.value ?? '').trim())
++
+ const filterParams = computed(() => {
+   return {
+     from_date: !object.isEmpty(dateRangeFilter.value?.start)
+@@ -58,9 +67,19 @@ const filterParams = computed(() => {
+       : undefined,
+     item_id: store.items.toString().length ? store.items.toString() : undefined,
+     company_id: appStore.currentUser.base_company?.id,
++    include_serial: includeSerial.value,
++    ...(includeSerial.value && serialText.value
++      ? { serial: serialText.value }
++      : {}),
+   }
+ })
+ 
++const reportHeaders = computed(() =>
++  includeSerial.value
++    ? store.headers
++    : store.headers.filter(({ value }) => value !== 'serial')
++)
++
+ const crr_year_plus_ten = new Date().getFullYear() + 10
+ const { isDark } = useThemeAppearance()
+ 
+@@ -80,10 +99,44 @@ function onUpdateTimeframe(data: TTimeFrame) {
+   onChangeDateRange()
+ }
+ 
++function resetSerialFilterMessages() {
++  serialFilterMessage.value = {
++    warehouse: '',
++    items: '',
++  }
++}
++
++function hasSelectedValue(value: unknown) {
++  return Array.isArray(value) ? value.length > 0 : Boolean(value)
++}
++
++function validateSerialFilters() {
++  resetSerialFilterMessages()
++
++  if (!includeSerial.value) {
++    return true
++  }
++
++  if (!hasSelectedValue(store.warehouse)) {
++    serialFilterMessage.value.warehouse = 'Please select warehouse'
++  }
++
++  if (!hasSelectedValue(store.items)) {
++    serialFilterMessage.value.items = 'Please select inventory item'
++  }
++
++  return (
++    !serialFilterMessage.value.warehouse && !serialFilterMessage.value.items
++  )
++}
++
+ const mainStore = inventoryStore()
+ onBeforeMount(() => {
+   mainStore.$reset()
+   timeframe.value = 'date'
++  includeSerial.value = false
++  serial.value = ''
++  resetSerialFilterMessages()
+   store.warehouse =
+     store.warehouse_info =
+     dateRange.value =
+@@ -113,16 +166,29 @@ onMounted(() => {
+ })
+ 
+ function onSearch() {
+-  if (object.isEmpty(dateRange.value)) {
++  const hasDate = !object.isEmpty(dateRange.value)
++  const hasSerialFilters = validateSerialFilters()
++
++  if (!hasDate) {
+     dateMessage.value = 'Please select date'
++  } else {
++    dateMessage.value = ''
++  }
++
++  if (!hasDate || !hasSerialFilters) {
+     return
+   }
+-  dateMessage.value = ''
++
+   manualFetch.value++
+ }
+ 
++function onUpdateIncludeSerial() {
++  resetSerialFilterMessages()
++  clearGridTrigger.value++
++}
++
+ const excelExportPrepend = computed<ExcelRow[]>(() => {
+-  const mergeAcross = store.headers.length - 1
++  const mergeAcross = reportHeaders.value.length - 1
+ 
+   const makeRow = (value: string, styleId = 'content'): ExcelRow => ({
+     cells: [
+@@ -186,82 +252,136 @@ const onSynchronizing = async (fn: TLoadingFn) => {
+         :is-sidebar-visible="false"
+         :is-statusbar-visible="true"
+         :manual-fetch="String(manualFetch)"
++        :clear-trigger="String(clearGridTrigger)"
+         service-key="getInventorySummaryWarehouseHistory"
+         :params="filterParams"
+-        :headers="store.headers"
++        :headers="reportHeaders"
+         file-name="Inventory Summary Warehouse History"
+         no-row-text="No data available. Please apply filters to see relevant results."
+         :excel-export-prepend="excelExportPrepend"
+         @synchronize="onSynchronizing">
+         <template #filter>
+-          <div class="w-100 d-md-flex gap-2 mt-2">
+-            <BaseField
+-              v-model="timeframe"
+-              :clearable="false"
+-              :items="timeframeOpts"
+-              class="w-100"
+-              field-type="select"
+-              hide-details="auto"
+-              item-title="name"
+-              item-value="value"
+-              label="Timeframe"
+-              @update:model-value="onUpdateTimeframe" />
+-            <div class="d-flex w-100 flex-column">
+-              <DatePicker
+-                v-model="dateRange"
+-                :dark="isDark"
+-                :enable-time-picker="false"
+-                :clearable="false"
+-                :month-picker="timeframePick.month"
+-                :year-picker="timeframePick.year"
+-                :year-range="[2008, crr_year_plus_ten]"
+-                auto-apply
+-                class="w-100 DP"
+-                :placeholder="`From ${capitalize(timeframe)} - To ${capitalize(timeframe)}`"
+-                :range="!timeframePick.year"
+-                @update:model-value="onChangeItem" />
+-              <v-messages
+-                v-if="dateMessage"
+-                class="mt-2 ml-3 font-weight-bold"
+-                :messages="dateMessage"
+-                active
+-                color="error" />
+-            </div>
+-            <BaseAutocomplete
+-              v-model="store.warehouse"
+-              v-model:items="store.warehouse_info"
+-              :api-service="lookupService.getWarehouseLocation"
+-              :table-headers="WAREHOUSE_HEADERS"
+-              chips
+-              class="required w-100"
+-              hide-details="auto"
+-              item-pre-title="reference_no"
+-              item-title="name"
+-              item-value="id"
+-              label="Warehouse"
+-              :clearable="true"
+-              multiple
+-              :trigger-on-focus="true" />
+-
+-            <BaseAutocomplete
+-              v-model="store.items"
+-              v-model:items="store.items_info"
+-              :api-service="lookupService.getItemIventory"
+-              :table-headers="itemHeaders"
+-              class="required w-100"
+-              hide-details="auto"
+-              item-pre-title="reference_no"
+-              item-title="name"
+-              item-value="id"
+-              label="Inventory Item"
+-              :clearable="true"
+-              chips
+-              multiple
+-              :trigger-on-focus="true" />
+-
+-            <div class="d-flex align-center">
+-              <v-btn size="small" @click="onSearch"> Search </v-btn>
+-            </div>
++          <div class="w-100 mt-2">
++            <v-row class="filter-row" align="start" no-gutters>
++              <v-col cols="12" md class="pa-0 pr-md-2">
++                <BaseField
++                  v-model="timeframe"
++                  :clearable="false"
++                  :items="timeframeOpts"
++                  class="w-100"
++                  field-type="select"
++                  hide-details="auto"
++                  item-title="name"
++                  item-value="value"
++                  label="Timeframe"
++                  @update:model-value="onUpdateTimeframe" />
++              </v-col>
++
++              <v-col cols="12" md class="pa-0 pr-md-2">
++                <DatePicker
++                  v-model="dateRange"
++                  :dark="isDark"
++                  :enable-time-picker="false"
++                  :clearable="false"
++                  :month-picker="timeframePick.month"
++                  :year-picker="timeframePick.year"
++                  :year-range="[2008, crr_year_plus_ten]"
++                  auto-apply
++                  class="w-100 DP"
++                  :placeholder="`From ${capitalize(timeframe)} - To ${capitalize(timeframe)}`"
++                  :range="!timeframePick.year"
++                  @update:model-value="onChangeItem" />
++                <v-messages
++                  v-if="dateMessage"
++                  class="mt-2 ml-3 font-weight-bold"
++                  :messages="dateMessage"
++                  active
++                  color="error" />
++              </v-col>
++
++              <v-col cols="12" md class="pa-0 pr-md-2">
++                <BaseAutocomplete
++                  v-model="store.warehouse"
++                  v-model:items="store.warehouse_info"
++                  :api-service="lookupService.getWarehouseLocation"
++                  :table-headers="WAREHOUSE_HEADERS"
++                  chips
++                  class="required w-100"
++                  hide-details="auto"
++                  item-pre-title="reference_no"
++                  item-title="name"
++                  item-value="id"
++                  label="Warehouse"
++                  :clearable="true"
++                  multiple
++                  :trigger-on-focus="true"
++                  @update:model-value="resetSerialFilterMessages"
++                  @click:clear="resetSerialFilterMessages" />
++                <v-messages
++                  v-if="serialFilterMessage.warehouse"
++                  class="mt-2 ml-3 font-weight-bold"
++                  :messages="serialFilterMessage.warehouse"
++                  active
++                  color="error" />
++              </v-col>
++
++              <v-col cols="12" md class="pa-0 pr-md-2">
++                <BaseAutocomplete
++                  v-model="store.items"
++                  v-model:items="store.items_info"
++                  :api-service="lookupService.getItemIventory"
++                  :table-headers="itemHeaders"
++                  class="required w-100"
++                  hide-details="auto"
++                  item-pre-title="reference_no"
++                  item-title="name"
++                  item-value="id"
++                  label="Inventory Item"
++                  :clearable="true"
++                  chips
++                  multiple
++                  :trigger-on-focus="true"
++                  @update:model-value="resetSerialFilterMessages"
++                  @click:clear="resetSerialFilterMessages" />
++                <v-messages
++                  v-if="serialFilterMessage.items"
++                  class="mt-2 ml-3 font-weight-bold"
++                  :messages="serialFilterMessage.items"
++                  active
++                  color="error" />
++              </v-col>
++
++              <v-col cols="12" md="auto" class="pa-0 filter-search-col">
++                <v-btn size="small" @click="onSearch"> Search </v-btn>
++              </v-col>
++            </v-row>
++
++            <v-row class="serial-filter-row mt-3" no-gutters>
++              <v-col cols="12" md class="pa-0 pr-md-2">
++                <v-checkbox
++                  v-model="includeSerial"
++                  density="compact"
++                  hide-details
++                  label="Include Serial Number"
++                  @update:model-value="onUpdateIncludeSerial" />
++              </v-col>
++
++              <v-col v-if="includeSerial" cols="12" md class="pa-0 pr-md-2">
++                <BaseField
++                  v-model="serial"
++                  class="w-100"
++                  field-type="text"
++                  hide-details="auto"
++                  label="Serial Number"
++                  clearable
++                  @keydown.enter.prevent="onSearch" />
++              </v-col>
++              <v-col v-else md class="d-none d-md-block pa-0 pr-md-2" />
++
++              <v-col md class="d-none d-md-block pa-0 pr-md-2" />
++              <v-col md class="d-none d-md-block pa-0 pr-md-2" />
++              <v-col md="auto" class="d-none d-md-block pa-0 search-spacer" />
++            </v-row>
+           </div>
+         </template>
+       </BaseAggrid>
+@@ -296,4 +416,22 @@ const onSynchronizing = async (fn: TLoadingFn) => {
+ .card-wrapper {
+   padding: 0;
+ }
++
++.filter-search-col {
++  align-items: center;
++  display: flex;
++}
++
++.serial-filter-row {
++  align-items: center;
++}
++
++@media (min-width: 960px) {
++  .filter-search-col,
++  .search-spacer {
++    flex: 0 0 88px;
++    max-width: 88px;
++    width: 88px;
++  }
++}
+ </style>
+-- 
+2.50.1.windows.1
+
