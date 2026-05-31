@@ -1,0 +1,479 @@
+From 30796b1716070ba0f6bef6da1b0f873e8e528f90 Mon Sep 17 00:00:00 2001
+From: "vyrapol.vutha" <vyrapol.vutha@wingbank.com.kh>
+Date: Sun, 31 May 2026 20:40:47 +0700
+Subject: [PATCH] add: ot compensation ordering
+
+---
+ src/modules/requests/locales/en.json          |  48 ++++---
+ src/modules/requests/locales/kh.json          |   6 +
+ .../requests/router/configuration.routes.ts   |  34 +++--
+ src/modules/requests/router/route.name.ts     |   1 +
+ .../services/configuration.service.ts         |  21 ++-
+ src/modules/requests/types/configuration.ts   |   1 +
+ .../types/overtime/priority-ordering.type.ts  |  42 ++++++
+ .../requests/views/configuration/index.vue    |   5 +
+ .../overtime-settings/priority-order/form.vue | 125 ++++++++++++++++++
+ .../priority-order/index.vue                  |  12 ++
+ 10 files changed, 265 insertions(+), 30 deletions(-)
+ create mode 100644 src/modules/requests/types/overtime/priority-ordering.type.ts
+ create mode 100644 src/modules/requests/views/configuration/overtime-settings/priority-order/form.vue
+ create mode 100644 src/modules/requests/views/configuration/overtime-settings/priority-order/index.vue
+
+diff --git a/src/modules/requests/locales/en.json b/src/modules/requests/locales/en.json
+index 967329161e..97f4e25b39 100644
+--- a/src/modules/requests/locales/en.json
++++ b/src/modules/requests/locales/en.json
+@@ -121,60 +121,60 @@
+             "invitation_template": {},
+             "training_document_template": {}
+         }
+-      },
++    },
+     "overtime_rule": {
+-      "title": "Overtime Rules",
+-      "value": "Values",
+-      "addEdition": "Add Edition"
++        "title": "Overtime Rules",
++        "value": "Values",
++        "addEdition": "Add Edition"
+     },
+     "overtime_rule_table": {
+-      "none_data": "No item added yet. Click Add to create a new item."
++        "none_data": "No item added yet. Click Add to create a new item."
+     },
+     "configuration_overtime_reason": {
+-      "title": "Overtime Reason"
++        "title": "Overtime Reason"
+     },
+     "overtime_detail": {
+-      "title": "Overtime Details"
++        "title": "Overtime Details"
+     },
+     "salary_per_hour": {
+-      "title": "Salary Rate Per Hour"
++        "title": "Salary Rate Per Hour"
+     },
+     "overtime_details_require": {
+-      "title": "This overtime details is required and can't be empty"
++        "title": "This overtime details is required and can't be empty"
+     },
+     "configuration_overtime_help": {
+-      "title": "Overtime Help"
++        "title": "Overtime Help"
+     },
+     "configuration_overtime_setting": {
+-      "title": "Overtime Settings"
++        "title": "Overtime Settings"
+     },
+     "configuration_overtime_setting_musk": {
+-      "title": "Masked Credential Amount"
++        "title": "Masked Credential Amount"
+     },
+     "configuration_overtime_setting_crossmonth": {
+-      "title": "Restrict Overtime Request Single Calendar"
++        "title": "Restrict Overtime Request Single Calendar"
+     },
+     "configuration_overtime_setting_allow_period": {
+-      "title": "Allowed OT Request Period"
++        "title": "Allowed OT Request Period"
+     },
+     "configuration_overtime_setting_type_priority": {
+-      "title": "OT Type Priority Setup"
++        "title": "OT Type Priority Setup"
+     },
+     "configuration_overtime_setting_allow_backdate": {
+-      "title": "Allow Backdate"
++        "title": "Allow Backdate"
+     },
+     "configuration_overtime_setting_no_backdate": {
+-      "title": "Backdate Limit – OT Request (Days)"
++        "title": "Backdate Limit – OT Request (Days)"
+     },
+     "configuration_overtime_setting_allow_future": {
+-      "title": "Allow Future Date"
++        "title": "Allow Future Date"
+     },
+     "configuration_overtime_setting_no_forwarddate": {
+-      "title": "Future Date Limit – OT Request (Days)"
++        "title": "Future Date Limit – OT Request (Days)"
+     },
+     "configuration_overtime_setting_time_rouding": {
+-      "title": "OT Time Rounding",
+-      "details": "Details"
++        "title": "OT Time Rounding",
++        "details": "Details"
+     },
+     "configuration_print_template": {
+         "code": "Code",
+@@ -191,5 +191,11 @@
+         "settlement": "Settlement",
+         "parameters": "Parameters",
+         "print_template": "Print Template"
++    },
++    "configuration_overtime_setting_priority_ordering": {
++        "title": "OT Compensation Type Priority Order",
++        "user_guide": "Drag and drop compensation types to set the priority order. The first item has the highest priority.",
++        "priority": "Priority",
++        "compensation_type": "Compensation Type"
+     }
+ }
+diff --git a/src/modules/requests/locales/kh.json b/src/modules/requests/locales/kh.json
+index 1bd76f4d81..60d52df118 100644
+--- a/src/modules/requests/locales/kh.json
++++ b/src/modules/requests/locales/kh.json
+@@ -194,5 +194,11 @@
+         "settlement": "ការទូទាត់បញ្ចប់",
+         "parameters": "ប៉ារ៉ាម៉ែត្រ",
+         "print_template": "គំរូបោះពុម្ព"
++    },
++    "configuration_overtime_setting_priority_ordering": {
++        "title": "OT Compensation Type Priority Order",
++        "user_guide": "Drag and drop compensation types to set the priority order. The first item has the highest priority.",
++        "priority": "Priority",
++        "compensation_type": "Compensation Type"
+     }
+ }
+diff --git a/src/modules/requests/router/configuration.routes.ts b/src/modules/requests/router/configuration.routes.ts
+index b0b48d4666..c9c65b57d3 100644
+--- a/src/modules/requests/router/configuration.routes.ts
++++ b/src/modules/requests/router/configuration.routes.ts
+@@ -27,26 +27,38 @@ const CONFIGURATION_ROUTES: any[] = [
+     ...RouteGroup({
+         name: OvertimeConfigRouteName.OVERTIME_SETTINGS_MASK_CREDENTIAL_AMOUNT,
+         meta: { title: `${MODULE_NAME}  Overtime Settings Mask Credential Amount` },
+-        listComponent: () => import('@@/requests/views/configuration/overtime-settings/mask-credential-amount/index.vue'),
+-        formComponent: () => import('@@/requests/views/configuration/overtime-settings/mask-credential-amount/form.vue'),
++        listComponent: () =>
++            import('@@/requests/views/configuration/overtime-settings/mask-credential-amount/index.vue'),
++        formComponent: () =>
++            import('@@/requests/views/configuration/overtime-settings/mask-credential-amount/form.vue'),
+     }),
+     ...RouteGroup({
+         name: OvertimeConfigRouteName.OVERTIME_SETTINGS_RESTRICT_OVERTIME_SINGLE_CALENDAR,
+         meta: { title: `${MODULE_NAME}  Overtime Settings Restrict Overtime Request Single Calendar` },
+-        listComponent: () => import('@@/requests/views/configuration/overtime-settings/restrict-overtime-request-single-calendar/index.vue'),
+-        formComponent: () => import('@@/requests/views/configuration/overtime-settings/restrict-overtime-request-single-calendar/form.vue'),
++        listComponent: () =>
++            import(
++                '@@/requests/views/configuration/overtime-settings/restrict-overtime-request-single-calendar/index.vue'
++            ),
++        formComponent: () =>
++            import(
++                '@@/requests/views/configuration/overtime-settings/restrict-overtime-request-single-calendar/form.vue'
++            ),
+     }),
+     ...RouteGroup({
+         name: OvertimeConfigRouteName.OVERTIME_SETTINGS_BACK_DATE_CONDITION,
+         meta: { title: `${MODULE_NAME}  Overtime Settings Back Date Condition` },
+-        listComponent: () => import('@@/requests/views/configuration/overtime-settings/allow-back-date-ot-submission/index.vue'),
+-        formComponent: () => import('@@/requests/views/configuration/overtime-settings/allow-back-date-ot-submission/form.vue'),
++        listComponent: () =>
++            import('@@/requests/views/configuration/overtime-settings/allow-back-date-ot-submission/index.vue'),
++        formComponent: () =>
++            import('@@/requests/views/configuration/overtime-settings/allow-back-date-ot-submission/form.vue'),
+     }),
+     ...RouteGroup({
+         name: OvertimeConfigRouteName.OVERTIME_SETTINGS_OVERLAPPING_OT_TYPE_PRIORITY_SETUP,
+         meta: { title: `${MODULE_NAME}  Overtime Settings OT Type Priority Setup` },
+-        listComponent: () => import('@@/requests/views/configuration/overtime-settings/overlapping-ot-type-priority-setup/index.vue'),
+-        formComponent: () => import('@@/requests/views/configuration/overtime-settings/overlapping-ot-type-priority-setup/form.vue'),
++        listComponent: () =>
++            import('@@/requests/views/configuration/overtime-settings/overlapping-ot-type-priority-setup/index.vue'),
++        formComponent: () =>
++            import('@@/requests/views/configuration/overtime-settings/overlapping-ot-type-priority-setup/form.vue'),
+     }),
+     ...RouteGroup({
+         name: OvertimeConfigRouteName.OVERTIME_SETTINGS_ROUNDING,
+@@ -54,5 +66,11 @@ const CONFIGURATION_ROUTES: any[] = [
+         listComponent: () => import('@@/requests/views/configuration/overtime-settings/ot-time-rounding/index.vue'),
+         formComponent: () => import('@@/requests/views/configuration/overtime-settings/ot-time-rounding/form.vue'),
+     }),
++    ...RouteGroup({
++        name: OvertimeConfigRouteName.OVERTIME_SETTINGS_PRIORITY_ORDERING,
++        meta: { title: `${MODULE_NAME}  Overtime Settings OT Compensation Priority Order` },
++        listComponent: () => import('@@/requests/views/configuration/overtime-settings/priority-order/index.vue'),
++        formComponent: () => import('@@/requests/views/configuration/overtime-settings/priority-order/form.vue'),
++    }),
+ ]
+ export default CONFIGURATION_ROUTES
+diff --git a/src/modules/requests/router/route.name.ts b/src/modules/requests/router/route.name.ts
+index 92c06ce20e..1e4aabc51c 100644
+--- a/src/modules/requests/router/route.name.ts
++++ b/src/modules/requests/router/route.name.ts
+@@ -9,4 +9,5 @@ export enum OvertimeConfigRouteName {
+     OVERTIME_SETTINGS_OVERLAPPING_OT_TYPE_PRIORITY_SETUP = 'settings-overlapping-ot-type-priority-setup',
+     OVERTIME_SETTINGS_FORWARD_DATE_CONDITION = 'settings-forward-date-condition',
+     OVERTIME_SETTINGS_ROUNDING = 'setting-ot-time-rounding',
++    OVERTIME_SETTINGS_PRIORITY_ORDERING = 'setting-ot-priority-ordering',
+ }
+diff --git a/src/modules/requests/services/configuration.service.ts b/src/modules/requests/services/configuration.service.ts
+index df5721f727..3e80f9e342 100644
+--- a/src/modules/requests/services/configuration.service.ts
++++ b/src/modules/requests/services/configuration.service.ts
+@@ -12,6 +12,11 @@ import { omit } from 'lodash'
+ import { objectMapper } from '@/utils/object-mapper'
+ import type { IResponseData } from '@/types/IBaseResponse'
+ import { decryptData, encryptData } from '@@/requests/store/encryption'
++import { PriorityOrderingPure } from '@@/requests/types/overtime/priority-ordering.type'
++import type {
++    PriorityOrderingPayloadData,
++    PriorityOrderingResponseData,
++} from '@@/requests/types/overtime/priority-ordering.type'
+ 
+ export const ConfigOvertimeRuleServices = {
+     get: async (params?: object) => {
+@@ -90,7 +95,7 @@ export const ConfigOvertimeRuleServices = {
+                         return validConditions.length > 0
+                             ? {
+                                   claim: id ?? null,
+-                                  conditions: validConditions.map((condition) => ({
++                                  conditions: validConditions.map(condition => ({
+                                       field: condition.field,
+                                       value: condition.value,
+                                       operator: condition.operator,
+@@ -201,3 +206,17 @@ export const OTimeRounding = {
+         return axios.delete(`/hr_overtime/config_round_setting/${id}`)
+     },
+ }
++
++export const PriorityOrderingService = {
++    get: (params?: object): Promise<AxiosResponse<IResponseData<PriorityOrderingResponseData>>> => {
++        return axios.get<IResponseData<PriorityOrderingResponseData>>('/hr_overtime/config_compensation_type', {
++            params,
++        })
++    },
++    create: (formData: PriorityOrderingPayloadData): Promise<AxiosResponse<PriorityOrderingResponseData>> => {
++        return axios.post<PriorityOrderingResponseData>(
++            '/hr_overtime/config_compensation_type',
++            PriorityOrderingPure.createPayload(formData)
++        )
++    },
++}
+diff --git a/src/modules/requests/types/configuration.ts b/src/modules/requests/types/configuration.ts
+index b7e051cb73..0c58c6358e 100644
+--- a/src/modules/requests/types/configuration.ts
++++ b/src/modules/requests/types/configuration.ts
+@@ -3,6 +3,7 @@ export const OVERTIME_RULE_CONFIG = 'hrovertimeconfig'
+ export const REASON_TYPE = 'reason_of_overtime'
+ export const OVERTIME_MODEL_SETTING = 'hrovertimesetting'
+ export const OVERTIME_MODEL_SETTING_ROUNDING = 'hrovertimeconfigroundsetting'
++export const PRIORITY_ORDERING_CONTENT_TYPE = 'hrovertimeconfigordercompensationtype'
+ 
+ export enum Compensation_Type {
+     AMOUNT = 'amount',
+diff --git a/src/modules/requests/types/overtime/priority-ordering.type.ts b/src/modules/requests/types/overtime/priority-ordering.type.ts
+new file mode 100644
+index 0000000000..ed7b5e7eba
+--- /dev/null
++++ b/src/modules/requests/types/overtime/priority-ordering.type.ts
+@@ -0,0 +1,42 @@
++type TCompensationType = 'percentage' | 'amount' | 'leave'
++
++export type PriorityOrderingType = {
++    sequence: number
++    compensation_type: TCompensationType
++}
++
++export type PriorityOrderingFormData = PriorityOrderingType[]
++export type PriorityOrderingPayloadType = PriorityOrderingType & {
++    id?: number
++}
++export type PriorityOrderingPayloadData = PriorityOrderingPayloadType[]
++export type PriorityOrderingResponseType = PriorityOrderingType & {
++    id: number
++}
++export type PriorityOrderingResponseData = PriorityOrderingResponseType[]
++
++export const PriorityOrderingPure = {
++    createFormData: (): PriorityOrderingFormData => {
++        return [
++            {
++                sequence: 1,
++                compensation_type: 'percentage',
++            },
++            {
++                sequence: 2,
++                compensation_type: 'amount',
++            },
++            {
++                sequence: 3,
++                compensation_type: 'leave',
++            },
++        ]
++    },
++    createPayload: (formData: PriorityOrderingPayloadData): PriorityOrderingPayloadData => {
++        return formData.map(item => ({
++            ...(item.id !== undefined ? { id: item.id } : {}),
++            sequence: item.sequence,
++            compensation_type: item.compensation_type,
++        }))
++    },
++}
+diff --git a/src/modules/requests/views/configuration/index.vue b/src/modules/requests/views/configuration/index.vue
+index f011283a18..514fc86ab0 100644
+--- a/src/modules/requests/views/configuration/index.vue
++++ b/src/modules/requests/views/configuration/index.vue
+@@ -79,6 +79,11 @@
+                     value: OvertimeConfigRouteName.OVERTIME_SETTINGS_ROUNDING,
+                     routeName: `${OvertimeConfigRouteName.OVERTIME_SETTINGS_ROUNDING}.list`,
+                 },
++                {
++                    title: 'OT Compensation Priority Order',
++                    value: OvertimeConfigRouteName.OVERTIME_SETTINGS_PRIORITY_ORDERING,
++                    routeName: `${OvertimeConfigRouteName.OVERTIME_SETTINGS_PRIORITY_ORDERING}.list`,
++                },
+             ],
+         },
+     ])
+diff --git a/src/modules/requests/views/configuration/overtime-settings/priority-order/form.vue b/src/modules/requests/views/configuration/overtime-settings/priority-order/form.vue
+new file mode 100644
+index 0000000000..b0d9cf2833
+--- /dev/null
++++ b/src/modules/requests/views/configuration/overtime-settings/priority-order/form.vue
+@@ -0,0 +1,125 @@
++<template>
++    <base-form
++        v-model="formData"
++        :title="$t('configuration_overtime_setting.title')"
++        :editing-id="editingId"
++        :editing="editing"
++        :show-discard="false"
++        :simple-form="true"
++        :route-group="OvertimeConfigRouteName.OVERTIME_SETTINGS"
++        :linked-model="PRIORITY_ORDERING_CONTENT_TYPE"
++        :api-service="PriorityOrderingService"
++        :on-success="true"
++        @saved="saved"
++        @success.stop=""
++    >
++        <template #default="{ formMode }">
++            <p class="pb-4 font-weight-medium" style="font-size: 15px">
++                {{ $t('configuration_overtime_setting_priority_ordering.title') }}
++            </p>
++            <p class="pb-4 text-body-2 text-grey-darken-1">
++                {{ $t('configuration_overtime_setting_priority_ordering.user_guide') }}
++            </p>
++            <v-row>
++                <v-col cols="12">
++                    <v-table density="compact">
++                        <thead>
++                            <tr>
++                                <th style="width: 120px">
++                                    {{ $t('configuration_overtime_setting_priority_ordering.priority') }}
++                                </th>
++                                <th>{{ $t('configuration_overtime_setting_priority_ordering.compensation_type') }}</th>
++                            </tr>
++                        </thead>
++                        <draggable
++                            v-model="formData"
++                            tag="tbody"
++                            item-key="compensation_type"
++                            :disabled="formMode === 'view'"
++                            @change="refreshSequence"
++                        >
++                            <template #item="{ element: item, index }">
++                                <tr :class="[formMode === 'view' ? 'cursor-default' : 'cursor-move']">
++                                    <td class="py-2">
++                                        <div class="d-flex align-center gap-2">
++                                            <v-icon v-if="formMode !== 'view'" icon="mdi-drag" size="small" />
++                                            <span class="priority-order-number">{{ index + 1 }}</span>
++                                        </div>
++                                    </td>
++                                    <td class="py-2">{{ getCompensationTypeLabel(item.compensation_type) }}</td>
++                                </tr>
++                            </template>
++                        </draggable>
++                    </v-table>
++                </v-col>
++            </v-row>
++        </template>
++    </base-form>
++</template>
++
++<script setup lang="ts">
++    import { onMounted, ref } from 'vue'
++    import draggable from 'vuedraggable'
++    import { PriorityOrderingService } from '@@/requests/services/configuration.service'
++    import { OvertimeConfigRouteName } from '@/modules/requests/router/route.name'
++    import { PRIORITY_ORDERING_CONTENT_TYPE } from '@@/requests/types/configuration'
++    import { PriorityOrderingPure } from '@@/requests/types/overtime/priority-ordering.type'
++    import type {
++        PriorityOrderingPayloadData,
++        PriorityOrderingType,
++    } from '@@/requests/types/overtime/priority-ordering.type'
++
++    const compensationTypeLabels: Record<PriorityOrderingType['compensation_type'], string> = {
++        percentage: 'Percentage',
++        amount: 'Amount',
++        leave: 'Compensatory Leave',
++    }
++
++    const emit = defineEmits(['saved'])
++    const formData = ref<PriorityOrderingPayloadData>(PriorityOrderingPure.createFormData())
++    const editing = ref(false)
++    const editingId = ref<number | null>(null)
++
++    async function get() {
++        const response = await PriorityOrderingService.get()
++        const data = response.data.results
++        if (!data.length) {
++            return
++        }
++        formData.value = data
++        refreshSequence()
++    }
++    function refreshSequence() {
++        formData.value = formData.value.map((item, index) => ({
++            ...item,
++            sequence: index + 1,
++        }))
++    }
++    function getCompensationTypeLabel(type: PriorityOrderingType['compensation_type']) {
++        return compensationTypeLabels[type]
++    }
++    function saved(formErrors: { formErrors: Record<string, any> }) {
++        if (Object.keys(formErrors.formErrors).length) {
++            return
++        }
++        emit('saved')
++    }
++    onMounted(() => {
++        get()
++    })
++</script>
++
++<style scoped>
++    .priority-order-number {
++        align-items: center;
++        background: rgb(var(--v-theme-surface-variant));
++        border-radius: 999px;
++        display: inline-flex;
++        font-size: 0.8125rem;
++        font-weight: 600;
++        height: 1.75rem;
++        justify-content: center;
++        min-width: 1.75rem;
++        padding: 0 0.5rem;
++    }
++</style>
+diff --git a/src/modules/requests/views/configuration/overtime-settings/priority-order/index.vue b/src/modules/requests/views/configuration/overtime-settings/priority-order/index.vue
+new file mode 100644
+index 0000000000..ba253e1481
+--- /dev/null
++++ b/src/modules/requests/views/configuration/overtime-settings/priority-order/index.vue
+@@ -0,0 +1,12 @@
++<template>
++    <div>
++        <Form :key="key" @saved="key++" />
++    </div>
++</template>
++
++<script setup lang="ts">
++    import Form from '@@/requests/views/configuration/overtime-settings/priority-order/form.vue'
++    import { ref } from 'vue'
++
++    const key = ref(0)
++</script>
+-- 
+2.50.1.windows.1
+
