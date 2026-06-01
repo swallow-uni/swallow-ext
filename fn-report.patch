@@ -1,0 +1,461 @@
+diff --git forkSrcPrefix/src/modules/reports/components/Aggrid/BaseAggrid.vue forkDstPrefix/src/modules/reports/components/Aggrid/BaseAggrid.vue
+index de1f03873903d612532889aacfb33afa2bd3bb26..42ae33a0ead6a8ea6ecdd4d0b69e94e31514a3b0 100644
+--- forkSrcPrefix/src/modules/reports/components/Aggrid/BaseAggrid.vue
++++ forkDstPrefix/src/modules/reports/components/Aggrid/BaseAggrid.vue
+@@ -261,6 +261,10 @@ const props = defineProps({
+     type: String,
+     default: '',
+   },
++  splitTreeDataExport: {
++    type: Boolean,
++    default: false,
++  },
+ })
+ 
+ const $emits = defineEmits(['synchronize'])
+@@ -1289,13 +1293,179 @@ function openDialog() {
+ }
+ 
+ const isoDate = new Date().toISOString().split('T')[0]
++function getExportFileName() {
++  return `${props.fileName}-${isoDate}`
++}
++
++function getExportGroupLabel(value: unknown) {
++  return String(value ?? '')
++    .split(IDENTIFIER)[0]
++    .trim()
++}
++
++function getTreeExportTitle() {
++  const headerName = props.autoGroupColumn?.headerName
++  if (typeof headerName === 'function') {
++    return headerName()
++  }
++  if (headerName && typeof headerName === 'object' && 'value' in headerName) {
++    return headerName.value
++  }
++  return headerName || props.fileName
++}
++
++function getTreeExportPath(node: any) {
++  if (Array.isArray(node?.data?.path)) {
++    return node.data.path
++  }
++
++  const leafPath = node?.allLeafChildren?.find((child: any) =>
++    Array.isArray(child?.data?.path)
++  )?.data?.path
++
++  if (Array.isArray(leafPath)) {
++    const level = Number.isInteger(node?.uiLevel) ? node.uiLevel + 1 : leafPath.length
++    return leafPath.slice(0, level)
++  }
++
++  if (typeof node?.getRoute === 'function') {
++    const route = node.getRoute()
++    if (Array.isArray(route)) {
++      return route
++    }
++  }
++
++  const path = []
++  let current = node
++  while (current?.key != null) {
++    path.unshift(current.key)
++    current = current.parent
++  }
++
++  return path
++}
++
++function getTreeExportValueColumn() {
++  const columns = flatMap(colDefs.value, (item: any) => item.children || item)
++  return (
++    columns.find((item: any) => item.field === 'display_balance') ||
++    columns.find((item: any) => typeof item.exportValueGetter === 'function')
++  )
++}
++
++function getTreeExportAmount(node: any) {
++  const colDef = getTreeExportValueColumn()
++  if (!colDef) {
++    return ''
++  }
++
++  const value = get(node?.data, colDef.field, '')
++  if (typeof colDef.exportValueGetter === 'function') {
++    return colDef.exportValueGetter({
++      node,
++      data: node?.data,
++      value,
++      valueFormatted: value,
++    })
++  }
++
++  return value ?? ''
++}
++
++function getSheetColumnWidth(width: unknown, fallbackWch: number) {
++  const numericWidth = Number(width)
++
++  return {
++    wch: Number.isFinite(numericWidth) && numericWidth > 0
++      ? numericWidth
++      : fallbackWch,
++  }
++}
++
++function getTreeHierarchyColumnWidth(index: number) {
++  const configuredWidths = props.autoGroupColumn?.excelWidths
++  return getSheetColumnWidth(
++    configuredWidths?.[index] ?? props.autoGroupColumn?.excelWidth,
++    32
++  )
++}
++
++function exportSplitTreeDataToExcel(fileName = getExportFileName()) {
++  const nodes: Array<{ node: any; path: string[] }> = []
++
++  gridApi.value?.forEachNodeAfterFilterAndSort((node: any) => {
++    if (node?.footer) {
++      return
++    }
++
++    const path = getTreeExportPath(node)
++      .map((item: unknown) => getExportGroupLabel(item))
++      .filter(Boolean)
++
++    if (path.length) {
++      nodes.push({ node, path })
++    }
++  })
++
++  if (!nodes.length) {
++    return false
++  }
++
++  const hierarchyColumnCount = Math.max(
++    ...nodes.map(({ path }) => path.length),
++    1
++  )
++  const rows = [
++    [
++      getTreeExportTitle(),
++      ...Array.from({ length: hierarchyColumnCount }, () => ''),
++    ],
++    ...nodes.map(({ node, path }) => {
++      const row = Array.from({ length: hierarchyColumnCount + 1 }, () => '')
++      row[path.length - 1] = path[path.length - 1]
++      row[hierarchyColumnCount] = getTreeExportAmount(node)
++      return row
++    }),
++  ]
++
++  const workbook = XLSX.utils.book_new()
++  const worksheet = XLSX.utils.aoa_to_sheet(rows)
++  const titleCell = worksheet[XLSX.utils.encode_cell({ r: 0, c: 0 })]
++
++  if (titleCell) {
++    titleCell.s = {
++      alignment: { horizontal: 'center' },
++      font: { bold: true },
++      fill: { fgColor: { rgb: 'E7ECE2' } },
++    }
++  }
++
++  worksheet['!merges'] = [
++    {
++      s: { r: 0, c: 0 },
++      e: { r: 0, c: hierarchyColumnCount },
++    },
++  ]
++  worksheet['!cols'] = [
++    ...Array.from({ length: hierarchyColumnCount }, (_, index) =>
++      getTreeHierarchyColumnWidth(index)
++    ),
++    getSheetColumnWidth(props.autoGroupColumn?.excelAmountWidth, 18),
++  ]
++  worksheet['!freeze'] = 'A2'
++
++  XLSX.utils.book_append_sheet(workbook, worksheet, props.fileName)
++  XLSX.writeFile(workbook, `${fileName}.xlsx`, { cellStyles: true })
++  return true
++}
++
+ function exportToJSON() {
+   const json = JSON.stringify(rowData.value, null, 2)
+   const blob = new Blob([json], { type: 'application/json' })
+   const url = URL.createObjectURL(blob)
+   const a = document.createElement('a')
+   a.href = url
+-  a.download = `${props.fileName}-${isoDate}.json`
++  a.download = `${getExportFileName()}.json`
+   a.click()
+   URL.revokeObjectURL(url)
+ }
+@@ -1304,14 +1474,14 @@ function getParams(): ExcelExportParams {
+   return {
+     prependContent: props.excelExportPrepend,
+     appendContent: props.excelExportAppend,
+-    fileName: `${props.fileName}-${isoDate}`,
++    fileName: getExportFileName(),
+     sheetName: props.fileName,
+     skipRowGroups: true,
+     allColumns: props.treeData,
+     processCellCallback: (params) => {
+       // Customize specific cell export
+       if (props.treeData && params.column.getColId() === 'ag-Grid-AutoColumn') {
+-        return `${params.value.split(IDENTIFIER)[0].trim()}`
++        return getExportGroupLabel(params.value ?? params.node?.key)
+       }
+ 
+       const colDef = params.column.getColDef()
+@@ -1346,7 +1516,11 @@ function exportData() {
+       : item.field
+   ))
+ 
+-  const columnLength = combinedColumns?.length ?? colDefs.value?.length
++  const baseColumnLength = combinedColumns?.length ?? colDefs.value?.length ?? 0
++  const columnLength = Math.max(
++    props.treeData ? baseColumnLength + 1 : baseColumnLength,
++    1
++  )
+   const updateCells = (cells: ExcelCell[] = []) => cells.map((cell: ExcelCell) => ({
+     ...cell,
+     mergeAcross: columnLength - 1,
+@@ -1354,21 +1528,23 @@ function exportData() {
+   switch (exportType.value as any) {
+     case 'excel':
+       if (props.isExportBigData) {
+-        excelWorkerExport(`${props.fileName}-${isoDate}`)
++        excelWorkerExport(getExportFileName())
++      } else if (props.treeData && props.splitTreeDataExport) {
++        exportSplitTreeDataToExcel()
+       } else {
+         gridApi.value?.exportDataAsExcel({
+           ...getParams(),
+-        columnKeys: props.treeData ? undefined : combinedColumns,
++          columnKeys: props.treeData ? undefined : combinedColumns,
+           prependContent: props.excelExportPrepend?.map(item => ({ ...item, cells: updateCells(item.cells) })),
+         })
+       }
+       break
+     case 'csv':
+       if (props.isExportBigData) {
+-        csvWorkerExport(`${props.fileName}-${isoDate}`)
++        csvWorkerExport(getExportFileName())
+       } else {
+         gridApi.value?.exportDataAsCsv({
+-          fileName: `${props.fileName}-${isoDate}`,
++          fileName: getExportFileName(),
+           allColumns: false,
+           columnKeys: combinedColumns
+         })
+diff --git forkSrcPrefix/src/modules/reports/store/finance/balance-sheet.store.ts forkDstPrefix/src/modules/reports/store/finance/balance-sheet.store.ts
+index 2e1c5bbfc2912f337518b1ad7f914f14fc207094..c5630ca3fb062dd9d6591ec462f33de8fd3a46f9 100644
+--- forkSrcPrefix/src/modules/reports/store/finance/balance-sheet.store.ts
++++ forkDstPrefix/src/modules/reports/store/finance/balance-sheet.store.ts
+@@ -7,6 +7,7 @@ import {
+   type TLoadingFn,
+   useGl_Detail_reportStore,
+ } from '@@/reports/store/finance/gl-detail.store'
++import { financialDisplayBalanceExportValue } from '@@/reports/utils/finance'
+ 
+ export const useFinanceBalanceSheetStore = defineStore(
+   'useFinanceBalanceSheetStore',
+@@ -26,6 +27,8 @@ export const useFinanceBalanceSheetStore = defineStore(
+         flex: 1,
+         hide: true,
+         resizable: false,
++        exportValueGetter: (params: ValueFormatterParams) =>
++          financialDisplayBalanceExportValue(params),
+         cellStyle: (params) => {
+           if (params?.node?.displayed && params.node.key !== null) {
+             return { fontWeight: 'bold' }
+diff --git forkSrcPrefix/src/modules/reports/store/finance/cash-flow.store.ts forkDstPrefix/src/modules/reports/store/finance/cash-flow.store.ts
+index fa66e6b3d69407b29f30f30882374c860f28f7de..4d3f877eae901a53915d39cc2d63b9662dd96143 100644
+--- forkSrcPrefix/src/modules/reports/store/finance/cash-flow.store.ts
++++ forkDstPrefix/src/modules/reports/store/finance/cash-flow.store.ts
+@@ -7,6 +7,7 @@ import {
+   type TLoadingFn,
+   useGl_Detail_reportStore,
+ } from '@@/reports/store/finance/gl-detail.store'
++import { financialDisplayBalanceExportValue } from '@@/reports/utils/finance'
+ 
+ export const useFinanceCashFlowStore = defineStore(
+   'useFinanceCashFlowStore',
+@@ -26,6 +27,8 @@ export const useFinanceCashFlowStore = defineStore(
+         flex: 1,
+         hide: true,
+         resizable: false,
++        exportValueGetter: (params: ValueFormatterParams) =>
++          financialDisplayBalanceExportValue(params),
+         cellStyle: (params) => {
+           if (params?.node?.displayed && params.node.key !== null) {
+             return { fontWeight: 'bold' }
+diff --git forkSrcPrefix/src/modules/reports/store/finance/income-statement.store.ts forkDstPrefix/src/modules/reports/store/finance/income-statement.store.ts
+index c08ea2fe6930f658fde20e8223c250a1b7ebaf55..b080bef725760b576311dcce504fc31b88b0c527 100644
+--- forkSrcPrefix/src/modules/reports/store/finance/income-statement.store.ts
++++ forkDstPrefix/src/modules/reports/store/finance/income-statement.store.ts
+@@ -7,6 +7,7 @@ import {
+   type TLoadingFn,
+   useGl_Detail_reportStore,
+ } from '@@/reports/store/finance/gl-detail.store'
++import { financialDisplayBalanceExportValue } from '@@/reports/utils/finance'
+ 
+ export const useFinanceIncomeBalanceStore = defineStore(
+   'useFinanceIncomeBalanceStore',
+@@ -26,6 +27,8 @@ export const useFinanceIncomeBalanceStore = defineStore(
+         flex: 1,
+         hide: true,
+         resizable: false,
++        exportValueGetter: (params: ValueFormatterParams) =>
++          financialDisplayBalanceExportValue(params),
+         cellStyle: (params) => {
+           if (params?.node?.displayed && params.node.key !== null) {
+             return { fontWeight: 'bold' }
+diff --git forkSrcPrefix/src/modules/reports/utils/finance.ts forkDstPrefix/src/modules/reports/utils/finance.ts
+index 1a5aba0b1c94180c611ce802d5258326dca839f9..1bdf630e10af3b5138c3c4e337bbb172aa53eafd 100644
+--- forkSrcPrefix/src/modules/reports/utils/finance.ts
++++ forkDstPrefix/src/modules/reports/utils/finance.ts
+@@ -166,3 +166,76 @@ export function cellStyle(params: ValueFormatterParams) {
+   }
+   return { width: '100%' }
+ }
++
++export function financialDisplayBalanceExportValue(
++  params: ValueFormatterParams
++) {
++  const node = params?.node
++  const groupData = getFinancialGroupBalanceData(node)
++
++  if (node && node.allChildrenCount != null && node.uiLevel === 0) {
++    return ''
++  }
++
++  if (
++    node?.allChildrenCount != null &&
++    node.uiLevel != null &&
++    node.uiLevel >= 1 &&
++    groupData?.group_balance != null
++  ) {
++    return formatFinanceExportValue(
++      groupData.parent_of_coa?.balance,
++      groupData.group_balance
++    )
++  }
++
++  return formatFinanceExportValue(
++    params.data?.balance,
++    params.data?.display_balance ?? params.valueFormatted ?? params.value
++  )
++}
++
++function getFinancialGroupBalanceData(node: any) {
++  return (
++    node?.childrenAfterFilter?.find(
++      (child: any) => child?.data?.group_balance != null
++    )?.data ||
++    node?.allLeafChildren?.find(
++      (child: any) => child?.data?.group_balance != null
++    )?.data
++  )
++}
++
++function formatFinanceExportValue(value: unknown, displayValue?: unknown) {
++  const display =
++    displayValue === undefined || displayValue === null
++      ? ''
++      : String(displayValue).trim()
++
++  if (display === '' || display === '-') {
++    return display
++  }
++
++  if (typeof value === 'number' && Number.isFinite(value)) {
++    return formatFinanceExportAmount(value)
++  }
++
++  const text = String(value ?? display).trim()
++  const isNegative = text.includes('(') || text.startsWith('-')
++  const numeric = Number(text.replace(/[(),]/g, '').replace(/[^\d.-]/g, ''))
++
++  if (!Number.isFinite(numeric)) {
++    return display
++  }
++
++  return formatFinanceExportAmount(isNegative ? -Math.abs(numeric) : numeric)
++}
++
++function formatFinanceExportAmount(value: number) {
++  if (value === 0) {
++    return '-'
++  }
++
++  const amount = Math.abs(value).toFixed(2)
++  return value < 0 ? `(${amount})` : amount
++}
+diff --git forkSrcPrefix/src/modules/reports/views/finance/balance-sheet/index.vue forkDstPrefix/src/modules/reports/views/finance/balance-sheet/index.vue
+index 2b92c06c25ba0a74e9ecf7b4d0de56806dff064f..b36d72347cef149afd3f76136f0a946c8d4ee206 100644
+--- forkSrcPrefix/src/modules/reports/views/finance/balance-sheet/index.vue
++++ forkDstPrefix/src/modules/reports/views/finance/balance-sheet/index.vue
+@@ -205,6 +205,8 @@ const autoGroupColumnDef = ref({
+   headerName,
+   minWidth: 800,
+   maxWidth: 800,
++  excelWidth: 26,
++  excelAmountWidth: 18,
+   resizable: false,
+   filter: false,
+   floatingFilter: false,
+@@ -270,6 +272,7 @@ window.__onGroupRowClick = (nodeId: string | null) => {
+         :get-data-path="getDataPath"
+         :auto-group-column="autoGroupColumnDef"
+         :group-default-expanded="groupDefaultExpanded"
++        :split-tree-data-export="true"
+         @synchronize="onSynchronizing">
+         <template #filter>
+           <div class="w-100 d-flex justify-space-between">
+diff --git forkSrcPrefix/src/modules/reports/views/finance/cash-flow-statement/index.vue forkDstPrefix/src/modules/reports/views/finance/cash-flow-statement/index.vue
+index c612e12ab998afc2a95cded2ee5d8468ed842c0d..066b2b49e1b1b2f431646fa9893d01dedc3c05fe 100644
+--- forkSrcPrefix/src/modules/reports/views/finance/cash-flow-statement/index.vue
++++ forkDstPrefix/src/modules/reports/views/finance/cash-flow-statement/index.vue
+@@ -204,6 +204,8 @@ const autoGroupColumnDef = ref({
+   headerName,
+   minWidth: 800,
+   maxWidth: 800,
++  excelWidth: 26,
++  excelAmountWidth: 18,
+   resizable: false,
+   filter: false,
+   floatingFilter: false,
+@@ -269,6 +271,7 @@ window.__onGroupRowClick = (nodeId: string | null) => {
+         :get-data-path="getDataPath"
+         :auto-group-column="autoGroupColumnDef"
+         :group-default-expanded="groupDefaultExpanded"
++        :split-tree-data-export="true"
+         @synchronize="onSynchronizing">
+         <template #filter>
+           <div class="w-100 d-flex justify-space-between">
+diff --git forkSrcPrefix/src/modules/reports/views/finance/income-statement/index.vue forkDstPrefix/src/modules/reports/views/finance/income-statement/index.vue
+index b1873795c794dc673b5d47ae1b1951f931d53c64..5ae739e7b710f321501c9f15e577e0ecff13893c 100644
+--- forkSrcPrefix/src/modules/reports/views/finance/income-statement/index.vue
++++ forkDstPrefix/src/modules/reports/views/finance/income-statement/index.vue
+@@ -206,6 +206,8 @@ const autoGroupColumnDef = ref({
+   headerName,
+   minWidth: 800,
+   maxWidth: 800,
++  excelWidth: 26,
++  excelAmountWidth: 18,
+   resizable: false,
+   filter: false,
+   floatingFilter: false,
+@@ -271,6 +273,7 @@ window.__onGroupRowClick = (nodeId: string | null) => {
+         :get-data-path="getDataPath"
+         :auto-group-column="autoGroupColumnDef"
+         :group-default-expanded="groupDefaultExpanded"
++        :split-tree-data-export="true"
+         @synchronize="onSynchronizing">
+         <template #filter>
+           <div class="w-100 d-flex justify-space-between">
