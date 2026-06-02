@@ -1,0 +1,977 @@
+From 6881e012921eb75ed6eff11251b6d99817bc2454 Mon Sep 17 00:00:00 2001
+From: "vyrapol.vutha" <vyrapol.vutha@wingbank.com.kh>
+Date: Wed, 3 Jun 2026 03:08:20 +0700
+Subject: [PATCH] feat: enhance export fn report
+
+---
+ .../reports/components/Aggrid/BaseAggrid.vue  | 283 ++++++++++++------
+ .../Aggrid/utils/treeDataExcelExport.ts       | 273 +++++++++++++++++
+ .../views/finance/balance-sheet/index.vue     |   2 +
+ .../finance/cash-flow-statement/index.vue     |   6 +-
+ .../views/finance/income-statement/index.vue  |   6 +-
+ 5 files changed, 476 insertions(+), 94 deletions(-)
+ create mode 100644 src/modules/reports/components/Aggrid/utils/treeDataExcelExport.ts
+
+diff --git a/src/modules/reports/components/Aggrid/BaseAggrid.vue b/src/modules/reports/components/Aggrid/BaseAggrid.vue
+index 1fa1e8c5..e172a55c 100644
+--- a/src/modules/reports/components/Aggrid/BaseAggrid.vue
++++ b/src/modules/reports/components/Aggrid/BaseAggrid.vue
+@@ -1,4 +1,5 @@
+ <script lang="ts" setup>
++/* eslint-disable @typescript-eslint/no-use-before-define */
+ import { type PropType, defineProps, ref, shallowRef } from 'vue'
+ import { AgGridVue } from 'ag-grid-vue3'
+ import {
+@@ -33,7 +34,6 @@ import type {
+   ExcelStyle,
+   HeaderValueGetterParams,
+ } from 'ag-grid-community'
+-import XLSX from 'xlsx-js-style'
+ import LoadUIPresets from '../LoadUIPresets.vue'
+ import { useAggridStore } from '../../store/aggrid'
+ import {
+@@ -46,6 +46,10 @@ import {
+ import BaseRowCountStatusBar from './BaseRowCountStatusBar.vue'
+ import BaseAgDialog from './BaseAgDialog.vue'
+ import BaseFormulaDialog from './BaseFormulaDialog.vue'
++import {
++  exportSplitTreeDataToExcel,
++  getExportGroupLabel,
++} from './utils/treeDataExcelExport'
+ import { useCustomAggrid } from '@core/composables/useCustomAggrid'
+ import {
+   type IChunkArgs,
+@@ -62,7 +66,6 @@ import {
+   clearSession,
+   generateSessionId,
+ } from '@/utils/indexed-db'
+-import { IDENTIFIER } from '@@/reports/data/finance'
+ 
+ // Props
+ const props = defineProps({
+@@ -178,7 +181,7 @@ const props = defineProps({
+   },
+   payloads: {
+     type: Object,
+-    default: {},
++    default: () => ({}),
+   },
+   /**
+    * excelExportPrepend: Excel rows to prepend before exported table data.
+@@ -252,7 +255,11 @@ const props = defineProps({
+   headerKey: {
+     type: String,
+     default: '',
+-  }
++  },
++  splitTreeDataExport: {
++    type: Boolean,
++    default: false,
++  },
+ })
+ 
+ const $emits = defineEmits(['synchronize'])
+@@ -311,7 +318,9 @@ const isLoadingLoadMore = ref(false)
+ const dimensionHeaders = ref([])
+ const sessionId = ref('')
+ 
+-async function fetchData(__ = {}, isMore = false) {
++// Existing fetch flow has pagination, chunking, and dynamic headers in one path.
++// eslint-disable-next-line sonarjs/cognitive-complexity
++async function fetchData(isMore = false) {
+   try {
+     const params = {
+       ...props.params,
+@@ -368,7 +377,8 @@ async function fetchData(__ = {}, isMore = false) {
+                       subKey,
+                       parentKey: k,
+                       idx: i,
+-                      valueGetter: (params) => params.data?.[k]?.[i]?.[subKey],
++                      valueGetter: (cellParams) =>
++                        cellParams.data?.[k]?.[i]?.[subKey],
+                     }
+                   }),
+                 }
+@@ -386,7 +396,7 @@ async function fetchData(__ = {}, isMore = false) {
+         props.method,
+         params,
+         props.payloads,
+-        { ...pick(props, ['isExportBigData']), sessionId: sessionId.value },
++        { ...pick(props, ['isExportBigData']), sessionId: sessionId.value }
+       )
+ 
+       // await fetchWithDebounce(
+@@ -425,9 +435,9 @@ async function fetchData(__ = {}, isMore = false) {
+       //   props.method === 'post' ? props.payloads : {}
+       // )
+     } else {
+-      const { data: results, dimension_headers } = (await props.apiService?.[props.serviceKey](
+-        params
+-      )) || { data: {} }
++      const { data: results, dimension_headers } = (await props.apiService?.[
++        props.serviceKey
++      ](params)) || { data: {} }
+ 
+       const isHeaderDynamic = has(results, 'column_headers')
+       const rowValues =
+@@ -487,7 +497,11 @@ watch(chunkLoading, async (newValue: boolean, oldValue?: boolean) => {
+     setLoading(newValue)
+     agStore$.isLoading = newValue
+ 
+-    if (props.isExportBigData && !newValue && !isEmpty(gridApi.value?.getFilterModel())) {
++    if (
++      props.isExportBigData &&
++      !newValue &&
++      !isEmpty(gridApi.value?.getFilterModel())
++    ) {
+       syncFilteredRows({ api: gridApi.value })
+     }
+   }
+@@ -569,7 +583,7 @@ async function loadMoreRows() {
+   isLoadingLoadMore.value = true
+   currentPage.value += 1
+ 
+-  await fetchData({}, true)
++  await fetchData(true)
+ }
+ 
+ const { actionType, uiAction, expandType, presetUIs, dialogData, exportType } =
+@@ -673,7 +687,7 @@ function gridFirstLoad() {
+       e.stopImmediatePropagation()
+       e.stopPropagation()
+ 
+-      const [__, label] =
++      const [, label] =
+         (e.target as HTMLElement).closest('.ag-side-button-button')?.children ||
+         []
+ 
+@@ -764,25 +778,25 @@ function onOk({ value, name }: any) {
+     headerName: name,
+     field: snakeCase(name),
+     // params used in eval
+-    valueGetter: (params: any) => {
++    valueGetter: () => {
+       /**
+        * This was close due to sonar security fixed
+       if (value.match(ifPattern)) {
+         const [expr, ii, ee] = split(value.match(ifPattern)?.[1], ',')
+         const e = eval(getCompute(expr))
+-
++       
+         if (e) {
+           const iiV = eval(`params.data['${ii}']`)
+           return iiV || ii
+         }
+-
++       
+         const eeV = eval(`params.data['${ee}']`)
+         return eeV || ee
+       }
+-
++       
+       const compute = getCompute(value)
+       return eval(compute)
+-      */
++       */
+       return value
+     },
+   }
+@@ -796,13 +810,13 @@ function getCompute(value: string) {
+   const operatorsPattern = /(\+|\-|\*|\/|=|<=|>=|<|>)/
+   const cPattern = /\(\s*([^)]*)\s*\)/
+   const splitString = split(value, operatorsPattern)
+-
++ 
+   return chain(splitString)
+     .reduce((result: string, s: string) => {
+       const newValue = chain(s).toLower().trim().value()
+-
++ 
+       const matched = newValue.match(operatorsPattern)
+-
++ 
+       if (!isEmpty(matched)) {
+         result += first(matched)
+       } else if (newValue.match(cPattern)) {
+@@ -811,12 +825,12 @@ function getCompute(value: string) {
+       } else {
+         result += `(params.data['${newValue}'] || '${newValue}')`
+       }
+-
++ 
+       return result
+     }, '')
+     .value()
+ }
+-*/
++ */
+ 
+ async function loadData() {
+   if (props.apiService) {
+@@ -831,7 +845,10 @@ const syncFilteredRows = debounce(async ({ api }) => {
+     return
+   }
+ 
+-  let idbWorker = new Worker(new URL('../../../../workers/exportFilter.ts', import.meta.url), { type: 'module' })
++  const idbWorker = new Worker(
++    new URL('../../../../workers/exportFilter.ts', import.meta.url),
++    { type: 'module' }
++  )
+ 
+   const filterModel = api.getFilterModel()
+   if (isEmpty(filterModel)) {
+@@ -842,7 +859,13 @@ const syncFilteredRows = debounce(async ({ api }) => {
+     exportStore.value = FILTERED_STORE
+   }
+ 
+-  idbWorker.postMessage({ type: 'filter-and-save', filterModel, headers: JSON.stringify(colDefs.value), pageSize: props.pageSize, sessionId: sessionId.value })
++  idbWorker.postMessage({
++    type: 'filter-and-save',
++    filterModel,
++    headers: JSON.stringify(colDefs.value),
++    pageSize: props.pageSize,
++    sessionId: sessionId.value,
++  })
+ 
+   idbWorker.onmessage = (e: MessageEvent) => {
+     if (includes(['done', 'error'], e.data.type)) {
+@@ -860,11 +883,15 @@ function onBodyScrollEnd(e: any) {
+     return
+   }
+ 
+-  const body = (gridRef.value as any)?.$el?.querySelectorAll('.ag-body .ag-body-viewport .ag-center-cols-viewport') as any[]
+-  const bodyScrollHeight = ceil((first(body))?.scrollHeight || 0)
++  const body = (gridRef.value as any)?.$el?.querySelectorAll(
++    '.ag-body .ag-body-viewport .ag-center-cols-viewport'
++  ) as any[]
++  const bodyScrollHeight = ceil(first(body)?.scrollHeight || 0)
+   const bottomVert = ceil(e.api.getVerticalPixelRange().bottom)
+-  !isLoadingLoadMore.value && e.direction === 'vertical' && bottomVert >= bodyScrollHeight
+-    && loadMoreRows()
++  !isLoadingLoadMore.value &&
++    e.direction === 'vertical' &&
++    bottomVert >= bodyScrollHeight &&
++    loadMoreRows()
+ }
+ 
+ function onChartDestroyed() {
+@@ -1066,6 +1093,7 @@ function setDefaultUI(key: string) {
+   localStorage.setItem('gridPresetsUI', JSON.stringify(newUIs))
+ }
+ 
++// eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars, unused-imports/no-unused-vars
+ function setDefaultChart(key: string) {
+   const newUIs = mapValues(presetUIs.value, (item: any, k: string) => {
+     if (isBoolean(item.isDefault) && k === key) {
+@@ -1178,8 +1206,12 @@ function loadGridState(state: any) {
+ 
+     gridApi.value?.setGridOption('columnDefs', cd)
+ 
+-    if (state.filterState) gridApi.value?.setFilterModel(state.filterState)
+-    if (state.advancedFilterModel) gridApi.value?.setAdvancedFilterModel(state.advancedFilterModel)
++    if (state.filterState) {
++      gridApi.value?.setFilterModel(state.filterState)
++    }
++    if (state.advancedFilterModel) {
++      gridApi.value?.setAdvancedFilterModel(state.advancedFilterModel)
++    }
+ 
+     gridApi.value?.onFilterChanged()
+ 
+@@ -1223,7 +1255,7 @@ function closeDialog(data: any) {
+ const isShowFilter = ref(false)
+ function openDialog() {
+   switch (dialogData.value.dialog) {
+-    case 'filter':
++    case 'filter': {
+       const [sidebar] = document.querySelectorAll(
+         '.ag-grid-wrapper .ag-side-bar'
+       )
+@@ -1243,7 +1275,8 @@ function openDialog() {
+ 
+       agStore$.setActionType(undefined)
+       break
+-    case 'formula':
++    }
++    case 'formula': {
+       formulaFields.value = map(
+         gridApi.value?.getAllGridColumns(),
+         (el: any) => {
+@@ -1256,10 +1289,12 @@ function openDialog() {
+       ) as any[]
+       isFormulaOpened.value = true
+       break
+-    case 'saveChart':
++    }
++    case 'saveChart': {
+       const models = gridApi.value?.getChartModels()
+       !isEmpty(models) && (isDialogOpened.value = true)
+       break
++    }
+     case 'save':
+     case 'column':
+       isDialogOpened.value = true
+@@ -1270,28 +1305,33 @@ function openDialog() {
+ }
+ 
+ const isoDate = new Date().toISOString().split('T')[0]
++function getExportFileName() {
++  return `${props.fileName}-${isoDate}`
++}
++
+ function exportToJSON() {
+   const json = JSON.stringify(rowData.value, null, 2)
+   const blob = new Blob([json], { type: 'application/json' })
+   const url = URL.createObjectURL(blob)
+   const a = document.createElement('a')
+   a.href = url
+-  a.download = `${props.fileName}-${isoDate}.json`
++  a.download = `${getExportFileName()}.json`
+   a.click()
+   URL.revokeObjectURL(url)
+ }
+ 
+ function getParams(): ExcelExportParams {
+   return {
++    prependContent: props.excelExportPrepend,
+     appendContent: props.excelExportAppend,
+-    fileName: `${props.fileName}-${isoDate}`,
++    fileName: getExportFileName(),
+     sheetName: props.fileName,
+     skipRowGroups: true,
+     allColumns: props.treeData,
+     processCellCallback: (params) => {
+       // Customize specific cell export
+       if (props.treeData && params.column.getColId() === 'ag-Grid-AutoColumn') {
+-        return `${params.value.split(IDENTIFIER)[0].trim()}`
++        return getExportGroupLabel(params.value ?? params.node?.key)
+       }
+ 
+       const colDef = params.column.getColDef()
+@@ -1310,47 +1350,70 @@ function getParams(): ExcelExportParams {
+ }
+ 
+ function exportData() {
+-  const columnKeys = gridApi.value?.getAllDisplayedColumns()?.map((item: any) => item.getColId())
++  const columnKeys = gridApi.value
++    ?.getAllDisplayedColumns()
++    ?.map((item: any) => item.getColId())
+ 
+-  const isIncluded = (key: string, hide: boolean) => (
++  const isIncluded = (key: string, hide: boolean) =>
+     props.isExportOnly
+       ? columnKeys.includes(key) || hide
+       : columnKeys.includes(key)
+-  )
+ 
+-  const combinedColumns = colDefs.value?.filter(({ field, children, hide }: any) => {
+-    return children || isIncluded(field, hide)
+-  }).flatMap((item: any) => (
+-    item.children
+-      ? item.children.filter(({field, hide}: any) => isIncluded(field, hide))?.map((item: any) => item.field)
+-      : item.field
+-  ))
+-
+-  const columnLength = combinedColumns?.length ?? colDefs.value?.length
+-  const updateCells = (cells: ExcelCell[] = []) => cells.map((cell: ExcelCell) => ({
+-    ...cell,
+-    mergeAcross: columnLength - 1,
+-  }))
++  const combinedColumns = colDefs.value
++    ?.filter(({ field, children, hide }: any) => {
++      return children || isIncluded(field, hide)
++    })
++    .flatMap((column: any) => {
++      if (!column.children) {
++        return column.field
++      }
++
++      return column.children
++        .filter(({ field, hide }: any) => isIncluded(field, hide))
++        .map((childColumn: any) => childColumn.field)
++    })
++
++  const baseColumnLength = combinedColumns?.length ?? colDefs.value?.length ?? 0
++  const columnLength = Math.max(
++    props.treeData ? baseColumnLength + 1 : baseColumnLength,
++    1
++  )
++  const updateCells = (cells: ExcelCell[] = []) =>
++    cells.map((cell: ExcelCell) => ({
++      ...cell,
++      mergeAcross: columnLength - 1,
++    }))
+   switch (exportType.value as any) {
+     case 'excel':
+       if (props.isExportBigData) {
+-        excelWorkerExport(`${props.fileName}-${isoDate}`)
++        excelWorkerExport(getExportFileName())
++      } else if (props.treeData && props.splitTreeDataExport) {
++        exportSplitTreeDataToExcel({
++          autoGroupColumn: props.autoGroupColumn,
++          colDefs: colDefs.value,
++          fileName: getExportFileName(),
++          gridApi: gridApi.value,
++          sheetName: props.fileName,
++        })
+       } else {
+         gridApi.value?.exportDataAsExcel({
+           ...getParams(),
+-        columnKeys: props.treeData ? undefined : combinedColumns,
+-          prependContent: props.excelExportPrepend?.map(item => ({ ...item, cells: updateCells(item.cells) })),
++          columnKeys: props.treeData ? undefined : combinedColumns,
++          prependContent: props.excelExportPrepend?.map((item) => ({
++            ...item,
++            cells: updateCells(item.cells),
++          })),
+         })
+       }
+       break
+     case 'csv':
+       if (props.isExportBigData) {
+-        csvWorkerExport(`${props.fileName}-${isoDate}`)
++        csvWorkerExport(getExportFileName())
+       } else {
+         gridApi.value?.exportDataAsCsv({
+-          fileName: `${props.fileName}-${isoDate}`,
++          fileName: getExportFileName(),
+           allColumns: false,
+-          columnKeys: combinedColumns
++          columnKeys: combinedColumns,
+         })
+       }
+       break
+@@ -1414,20 +1477,28 @@ const exportAsSunTemplate = () => {
+   const headers = props.exportSunHeader
+ 
+   const mappedHeader = headers?.map((item: any) => {
+-    const dimensionHeader: any = dimensionHeaders.value?.find((header: any) => header.field_name === item.value)
+-    if (!dimensionHeader) return item
++    const dimensionHeader: any = dimensionHeaders.value?.find(
++      (header: any) => header.field_name === item.value
++    )
++    if (!dimensionHeader) {
++      return item
++    }
+     return {
+       ...item,
+-      value: dimensionHeader.analytic_prefix + dimensionHeader.field_name
++      value: dimensionHeader.analytic_prefix + dimensionHeader.field_name,
+     }
+   })
+ 
+-  if (!rowData.value.length) return
++  if (!rowData.value.length) {
++    return
++  }
+ 
+   // export only data display in table
+   const dataToExport: any[] = []
+   gridApi.value.forEachNodeAfterFilterAndSort((node: any) => {
+-    if (node?.data) dataToExport.push(node?.data)
++    if (node?.data) {
++      dataToExport.push(node?.data)
++    }
+   })
+ 
+   const clonedRows = cloneDeep(dataToExport)
+@@ -1453,9 +1524,17 @@ const exportAsSunTemplate = () => {
+ const csvWorkerExport = (fileName = 'report') => {
+   agStore$.isExporting = true
+ 
+-  const worker = new Worker(new URL('../../../../workers/exportCsv.ts', import.meta.url), { type: 'module' })
++  const worker = new Worker(
++    new URL('../../../../workers/exportCsv.ts', import.meta.url),
++    { type: 'module' }
++  )
+ 
+-  worker.postMessage({ exportStore: exportStore.value, headers: JSON.stringify(colDefs.value), key: props.headerKey, sessionId: sessionId.value })
++  worker.postMessage({
++    exportStore: exportStore.value,
++    headers: JSON.stringify(colDefs.value),
++    key: props.headerKey,
++    sessionId: sessionId.value,
++  })
+   worker.onmessage = (e) => {
+     const { blob, error } = e.data
+     if (error) {
+@@ -1477,11 +1556,19 @@ const csvWorkerExport = (fileName = 'report') => {
+ const excelWorkerExport = (fileName = 'report') => {
+   agStore$.isExporting = true
+ 
+-  const worker = new Worker(new URL('../../../../workers/exportExcel.ts', import.meta.url), {
+-    type: 'module'
+-  })
++  const worker = new Worker(
++    new URL('../../../../workers/exportExcel.ts', import.meta.url),
++    {
++      type: 'module',
++    }
++  )
+ 
+-  worker.postMessage({ exportStore: exportStore.value, headers: JSON.stringify(colDefs.value), key: props.headerKey, sessionId: sessionId.value })
++  worker.postMessage({
++    exportStore: exportStore.value,
++    headers: JSON.stringify(colDefs.value),
++    key: props.headerKey,
++    sessionId: sessionId.value,
++  })
+   worker.onmessage = (e: any) => {
+     const { blob, done, error } = e.data
+ 
+@@ -1649,33 +1736,35 @@ watch(
+     newValue &&
+       nextTick(() => {
+         if (props.groupFields) {
+-          autoGroupColumnDef.value = isEmpty(props.autoGroupColumn) ? {
+-            headerValueGetter: (params: HeaderValueGetterParams) => {
+-              if(props.groupDisplayType === 'multipleColumns') {
+-                return `${params.colDef.headerName}`
++          autoGroupColumnDef.value = isEmpty(props.autoGroupColumn)
++            ? {
++                headerValueGetter: (params: HeaderValueGetterParams) => {
++                  if (props.groupDisplayType === 'multipleColumns') {
++                    return `${params.colDef.headerName}`
++                  }
++                  return chain(props.groupFields)
++                    .first()
++                    .replace('_', ' ')
++                    .capitalize()
++                    .value()
++                },
++                minWidth: 200,
++                pinned: 'left',
++                comparator: (__: any, ___: any, nodeA: any, nodeB: any) =>
++                  (nodeA.childrenAfterFilter?.length || 0) -
++                  (nodeB.childrenAfterFilter?.length || 0),
+               }
+-              return chain(props.groupFields)
+-                .first()
+-                .replace('_', ' ')
+-                .capitalize()
+-                .value()
+-            },
+-            minWidth: 200,
+-            pinned: 'left',
+-            comparator: (__: any, ___: any, nodeA: any, nodeB: any) =>
+-              (nodeA.childrenAfterFilter?.length || 0) -
+-              (nodeB.childrenAfterFilter?.length || 0),
+-          } : props.autoGroupColumn
++            : props.autoGroupColumn
+         }
+ 
+         onGridReady({ api: gridApi.value })
+ 
+         // enable it back for group by one field first
+-        if (props.groupFields.length == 1) {
++        if (props.groupFields.length === 1) {
+           setTimeout(
+             () =>
+               props.groupFields &&
+-                gridApi.value?.setRowGroupColumns(props.groupFields),
++              gridApi.value?.setRowGroupColumns(props.groupFields),
+             500
+           )
+         }
+@@ -1710,9 +1799,15 @@ const initTabSession = () => {
+ 
+     if (type === 'register') {
+       if (otherSessionId === sessionId.value) {
+-        channel?.postMessage({ type: 'detect-new-tab', sessionId: sessionId.value })
++        channel?.postMessage({
++          type: 'detect-new-tab',
++          sessionId: sessionId.value,
++        })
+       }
+-    } else if (type === 'detect-new-tab' && otherSessionId === sessionId.value) {
++    } else if (
++      type === 'detect-new-tab' &&
++      otherSessionId === sessionId.value
++    ) {
+       sessionId.value = generateSessionId(true)
+       window.location.reload()
+     }
+@@ -1779,7 +1874,13 @@ onBeforeUnmount(async () => {
+       </div>
+     </transition>
+ 
+-    <div :class="['h-100', !isEmpty(groupFields) && !isEmpty(groupRowRenderer) && 'aggrid-grouped-data']">
++    <div
++      class="h-100"
++      :class="[
++        !isEmpty(groupFields) &&
++          !isEmpty(groupRowRenderer) &&
++          'aggrid-grouped-data',
++      ]">
+       <VProgressLinear
+         v-model="progressing"
+         bottom
+diff --git a/src/modules/reports/components/Aggrid/utils/treeDataExcelExport.ts b/src/modules/reports/components/Aggrid/utils/treeDataExcelExport.ts
+new file mode 100644
+index 00000000..e01b2c94
+--- /dev/null
++++ b/src/modules/reports/components/Aggrid/utils/treeDataExcelExport.ts
+@@ -0,0 +1,273 @@
++import flatMap from 'lodash/flatMap'
++import get from 'lodash/get'
++import XLSX from 'xlsx-js-style'
++import { IDENTIFIER } from '@@/reports/data/finance'
++
++interface SplitTreeDataExportParams {
++  autoGroupColumn: any
++  colDefs: any[]
++  fileName: string
++  gridApi: any
++  sheetName: string
++}
++
++export function getExportGroupLabel(value: unknown) {
++  return String(value ?? '')
++    .split(IDENTIFIER)[0]
++    .trim()
++}
++
++function getTreeExportTitle(autoGroupColumn: any, fallbackTitle: string) {
++  const headerName = autoGroupColumn?.headerName
++  if (typeof headerName === 'function') {
++    return headerName()
++  }
++  if (headerName && typeof headerName === 'object' && 'value' in headerName) {
++    return headerName.value
++  }
++  return headerName || fallbackTitle
++}
++
++function getTreeExportPath(node: any) {
++  if (Array.isArray(node?.data?.path)) {
++    return node.data.path
++  }
++
++  const leafPath = node?.allLeafChildren?.find((child: any) =>
++    Array.isArray(child?.data?.path)
++  )?.data?.path
++
++  if (Array.isArray(leafPath)) {
++    const level = Number.isInteger(node?.uiLevel)
++      ? node.uiLevel + 1
++      : leafPath.length
++    return leafPath.slice(0, level)
++  }
++
++  if (typeof node?.getRoute === 'function') {
++    const route = node.getRoute()
++    if (Array.isArray(route)) {
++      return route
++    }
++  }
++
++  const path = []
++  let current = node
++  while (current?.key != null) {
++    path.unshift(current.key)
++    current = current.parent
++  }
++
++  return path
++}
++
++function getTreeExportValueColumn(colDefs: any[]) {
++  const columns = flatMap(colDefs, (item: any) => item.children || item)
++  return (
++    columns.find((item: any) => item.field === 'display_balance') ||
++    columns.find((item: any) => typeof item.exportValueGetter === 'function')
++  )
++}
++
++function getTreeExportRenderedValue(colDef: any, params: any) {
++  if (typeof colDef.cellRenderer !== 'function') {
++    return undefined
++  }
++
++  const renderedValue = colDef.cellRenderer(params)
++  if (
++    typeof renderedValue === 'string' ||
++    typeof renderedValue === 'number' ||
++    typeof renderedValue === 'boolean'
++  ) {
++    return renderedValue
++  }
++
++  return undefined
++}
++
++function getTreeExportAmount(node: any, colDefs: any[]) {
++  const colDef = getTreeExportValueColumn(colDefs)
++  if (!colDef) {
++    return ''
++  }
++
++  const value = get(node?.data, colDef.field, '')
++  const params = {
++    node,
++    data: node?.data,
++    value,
++    valueFormatted: value,
++  }
++  const renderedValue = getTreeExportRenderedValue(colDef, params)
++  if (renderedValue !== undefined) {
++    return renderedValue
++  }
++
++  if (typeof colDef.exportValueGetter === 'function') {
++    return colDef.exportValueGetter(params)
++  }
++
++  return value ?? ''
++}
++
++function getSheetColumnWidth(width: unknown, fallbackWch: number) {
++  const numericWidth = Number(width)
++
++  return {
++    wch:
++      Number.isFinite(numericWidth) && numericWidth > 0
++        ? numericWidth
++        : fallbackWch,
++  }
++}
++
++function getExcelWidthAt(widths: unknown, index: number) {
++  if (!Array.isArray(widths) || !widths.length) {
++    return undefined
++  }
++
++  return widths[index]
++}
++
++function getTreeHierarchyColumnWidth(autoGroupColumn: any, index: number) {
++  const configuredWidths = autoGroupColumn?.excelWidths
++  return getSheetColumnWidth(
++    getExcelWidthAt(configuredWidths, index) ?? autoGroupColumn?.excelWidth,
++    32
++  )
++}
++
++function createBlankExportCells(length: number) {
++  return Array.from({ length }, () => null)
++}
++
++function getTreeExportStyleData(node: any) {
++  return (
++    node?.childrenAfterFilter?.find(
++      (child: any) => child?.data?.group_balance != null
++    )?.data || node?.data
++  )
++}
++
++function isTreeExportBoldRow(node: any) {
++  if (node?.allChildrenCount !== null && node?.uiLevel === 0) {
++    return true
++  }
++
++  return Boolean(getTreeExportStyleData(node)?.style)
++}
++
++function applyTreeExportBoldRow(
++  worksheet: Record<string, any>,
++  rowIndex: number,
++  lastColumnIndex: number
++) {
++  for (let columnIndex = 0; columnIndex <= lastColumnIndex; columnIndex++) {
++    const cell =
++      worksheet[
++        XLSX.utils.encode_cell({
++          r: rowIndex,
++          c: columnIndex,
++        })
++      ]
++
++    if (cell) {
++      cell.s = {
++        ...cell.s,
++        font: {
++          ...cell.s?.font,
++          bold: true,
++        },
++      }
++    }
++  }
++}
++
++export function exportSplitTreeDataToExcel({
++  autoGroupColumn,
++  colDefs,
++  fileName,
++  gridApi,
++  sheetName,
++}: SplitTreeDataExportParams) {
++  const nodes: Array<{ node: any; path: string[] }> = []
++
++  gridApi?.forEachNodeAfterFilterAndSort((node: any) => {
++    if (node?.footer) {
++      return
++    }
++
++    const path = getTreeExportPath(node)
++      .map((item: unknown) => getExportGroupLabel(item))
++      .filter(Boolean)
++
++    if (path.length) {
++      nodes.push({ node, path })
++    }
++  })
++
++  if (!nodes.length) {
++    return false
++  }
++
++  const hierarchyColumnCount = Math.max(
++    ...nodes.map(({ path }) => path.length),
++    1
++  )
++  const rows: unknown[][] = [
++    [
++      getTreeExportTitle(autoGroupColumn, sheetName),
++      ...createBlankExportCells(hierarchyColumnCount),
++    ],
++    ...nodes.map(({ node, path }) => {
++      const row: unknown[] = createBlankExportCells(hierarchyColumnCount + 1)
++      row[path.length - 1] = path[path.length - 1]
++      row[hierarchyColumnCount] = getTreeExportAmount(node, colDefs)
++      return row
++    }),
++  ]
++
++  const workbook = XLSX.utils.book_new()
++  const worksheet = XLSX.utils.aoa_to_sheet(rows)
++  const titleStyle = {
++    alignment: { horizontal: 'center' },
++    font: { bold: true },
++    fill: { fgColor: { rgb: 'E7ECE2' } },
++  }
++  const titleCell = worksheet[XLSX.utils.encode_cell({ r: 0, c: 0 })]
++
++  if (titleCell) {
++    titleCell.s = titleStyle
++  }
++
++  worksheet[XLSX.utils.encode_cell({ r: 0, c: hierarchyColumnCount })] = {
++    t: 's',
++    v: '',
++    s: titleStyle,
++  }
++
++  nodes.forEach(({ node }, index) => {
++    if (isTreeExportBoldRow(node)) {
++      applyTreeExportBoldRow(worksheet, index + 1, hierarchyColumnCount)
++    }
++  })
++
++  worksheet['!merges'] = [
++    {
++      s: { r: 0, c: 0 },
++      e: { r: 0, c: hierarchyColumnCount - 1 },
++    },
++  ]
++  worksheet['!cols'] = [
++    ...Array.from({ length: hierarchyColumnCount }, (_, index) =>
++      getTreeHierarchyColumnWidth(autoGroupColumn, index)
++    ),
++    getSheetColumnWidth(autoGroupColumn?.excelAmountWidth, 18),
++  ]
++  worksheet['!freeze'] = 'A2'
++
++  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName)
++  XLSX.writeFile(workbook, `${fileName}.xlsx`, { cellStyles: true })
++  return true
++}
+diff --git a/src/modules/reports/views/finance/balance-sheet/index.vue b/src/modules/reports/views/finance/balance-sheet/index.vue
+index 66d78550..bedb2d9a 100644
+--- a/src/modules/reports/views/finance/balance-sheet/index.vue
++++ b/src/modules/reports/views/finance/balance-sheet/index.vue
+@@ -194,6 +194,7 @@ const autoGroupColumnDef = ref({
+   headerName,
+   minWidth: 800,
+   maxWidth: 800,
++  excelWidths: [5],
+   resizable: false,
+   filter: false,
+   floatingFilter: false,
+@@ -259,6 +260,7 @@ window.__onGroupRowClick = (nodeId: string | null) => {
+         :get-data-path="getDataPath"
+         :auto-group-column="autoGroupColumnDef"
+         :group-default-expanded="groupDefaultExpanded"
++        :split-tree-data-export="true"
+         @synchronize="onSynchronizing">
+         <template #filter>
+           <div class="w-100 d-flex justify-space-between">
+diff --git a/src/modules/reports/views/finance/cash-flow-statement/index.vue b/src/modules/reports/views/finance/cash-flow-statement/index.vue
+index 64b8c06e..036498aa 100644
+--- a/src/modules/reports/views/finance/cash-flow-statement/index.vue
++++ b/src/modules/reports/views/finance/cash-flow-statement/index.vue
+@@ -193,6 +193,7 @@ const autoGroupColumnDef = ref({
+   headerName,
+   minWidth: 800,
+   maxWidth: 800,
++  excelWidths: [5],
+   resizable: false,
+   filter: false,
+   floatingFilter: false,
+@@ -204,7 +205,7 @@ const autoGroupColumnDef = ref({
+       innerRender(params, store.summaryCash),
+     suppressCount: true,
+   },
+-  cellStyle: (params: ValueFormatterParams) => cellStyle(params)
++  cellStyle: (params: ValueFormatterParams) => cellStyle(params),
+ })
+ 
+ async function getLedger() {
+@@ -258,6 +259,7 @@ window.__onGroupRowClick = (nodeId: string | null) => {
+         :get-data-path="getDataPath"
+         :auto-group-column="autoGroupColumnDef"
+         :group-default-expanded="groupDefaultExpanded"
++        :split-tree-data-export="true"
+         @synchronize="onSynchronizing">
+         <template #filter>
+           <div class="w-100 d-flex justify-space-between">
+@@ -435,4 +437,4 @@ window.__onGroupRowClick = (nodeId: string | null) => {
+ .cash-card-wrapper {
+   padding: 0;
+ }
+-</style>
+\ No newline at end of file
++</style>
+diff --git a/src/modules/reports/views/finance/income-statement/index.vue b/src/modules/reports/views/finance/income-statement/index.vue
+index 5a2c91ad..64693d24 100644
+--- a/src/modules/reports/views/finance/income-statement/index.vue
++++ b/src/modules/reports/views/finance/income-statement/index.vue
+@@ -154,7 +154,9 @@ async function getStatementVersion() {
+   )
+   if (versionOpts.value.length > 0) {
+     versionOpts.value = [...versionOpts.value, ...data.results]
+-  } else versionOpts.value = data.results
++  } else {
++    versionOpts.value = data.results
++  }
+ 
+   version.value = versionOpts.value.filter((v) => v.latest)
+   if (data.next != null) {
+@@ -193,6 +195,7 @@ const autoGroupColumnDef = ref({
+   headerName,
+   minWidth: 800,
+   maxWidth: 800,
++  excelWidths: [5],
+   resizable: false,
+   filter: false,
+   floatingFilter: false,
+@@ -258,6 +261,7 @@ window.__onGroupRowClick = (nodeId: string | null) => {
+         :get-data-path="getDataPath"
+         :auto-group-column="autoGroupColumnDef"
+         :group-default-expanded="groupDefaultExpanded"
++        :split-tree-data-export="true"
+         @synchronize="onSynchronizing">
+         <template #filter>
+           <div class="w-100 d-flex justify-space-between">
+-- 
+2.50.1.windows.1
+
