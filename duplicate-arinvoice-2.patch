@@ -1,0 +1,84 @@
+From 076d187a9d42bf75588e58423c869fcd1d5d15df Mon Sep 17 00:00:00 2001
+From: Shisun <worlddominator007@gmail.com>
+Date: Sat, 6 Jun 2026 21:02:56 +0700
+Subject: [PATCH] fix: clone recall to get new exchange rate
+
+---
+ .../useAccountReceivableDuplicate.ts          |  8 +++++
+ .../transaction/invoice/components/Form.vue   | 34 +++++++++++++++++++
+ 2 files changed, 42 insertions(+)
+
+diff --git a/src/modules/account-receivable/composables/useAccountReceivableDuplicate.ts b/src/modules/account-receivable/composables/useAccountReceivableDuplicate.ts
+index b7db234..140ddca 100644
+--- a/src/modules/account-receivable/composables/useAccountReceivableDuplicate.ts
++++ b/src/modules/account-receivable/composables/useAccountReceivableDuplicate.ts
+@@ -39,6 +39,14 @@ const duplicateAccountReceivableOmitKeys = [
+   'object_id',
+   'content_type',
+   'external_reference',
++  'customer_reference',
++  'transaction_date',
++  'financial_period',
++  'financial_year',
++  'due_date',
++  'exchange_rate',
++  'gdt_exchange_rate',
++  'rate_reciprocal',
+   'is_correction',
+   'parent',
+ ]
+diff --git a/src/modules/account-receivable/views/transaction/invoice/components/Form.vue b/src/modules/account-receivable/views/transaction/invoice/components/Form.vue
+index 6454792..1be944a 100644
+--- a/src/modules/account-receivable/views/transaction/invoice/components/Form.vue
++++ b/src/modules/account-receivable/views/transaction/invoice/components/Form.vue
+@@ -771,6 +771,39 @@
+     }
+   }
+ 
++  async function updateExchangeRate() {
++    if (!formData.value.currency?.id || !formData.value.rate_category?.id) {
++      formData.value.exchange_rate = null
++      formData.value.gdt_exchange_rate = null
++      formData.value.rate_reciprocal = null
++      return
++    }
++
++    try {
++      const { data } = await accountReceivableService.getRateCategoryByCurrencyId({
++        from_currency_id: formData.value.currency.id,
++      })
++      const latestRateCategory = data.results.find((rateCategory) => rateCategory.id === formData.value.rate_category?.id)
++
++      if (!latestRateCategory) {
++        formData.value.exchange_rate = null
++        formData.value.gdt_exchange_rate = null
++        formData.value.rate_reciprocal = null
++        return
++      }
++
++      formData.value.rate_category = latestRateCategory
++      formData.value.exchange_rate = latestRateCategory.rate_value ?? null
++      formData.value.gdt_exchange_rate = latestRateCategory.rate_value ?? null
++      formData.value.rate_reciprocal = latestRateCategory.rate_reciprocal ?? null
++    } catch (error) {
++      console.error('Error updating exchange rate:', error)
++      formData.value.exchange_rate = null
++      formData.value.gdt_exchange_rate = null
++      formData.value.rate_reciprocal = null
++    }
++  }
++
+   function onCreatePayment() {
+     const route = router.resolve({
+       name: 'account-receivable-payment.create',
+@@ -898,6 +931,7 @@
+             )
+             formData.value.financial_period = await findCurrentFinancialPeriod()
+             await updateDueDate()
++            await updateExchangeRate()
+           }
+         } else {
+           const storage = onGetStorage(INVOICE_KEY)
+-- 
+2.50.1.windows.1
+
