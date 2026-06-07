@@ -1,0 +1,203 @@
+From 9024509e05d328090334f35267f7163dff994924 Mon Sep 17 00:00:00 2001
+From: "vyrapol.vutha" <vyrapol.vutha@wingbank.com.kh>
+Date: Sun, 7 Jun 2026 22:06:51 +0700
+Subject: [PATCH] feat: map default bizpillar and consolidate share function
+ mapping ems key
+
+---
+ .../store/movement.employee.store.ts          | 124 ++++++++----------
+ .../movements/views/employee/detail.vue       |  21 +--
+ 2 files changed, 59 insertions(+), 86 deletions(-)
+
+diff --git a/src/modules/movements/store/movement.employee.store.ts b/src/modules/movements/store/movement.employee.store.ts
+index b863caabdf..df3383f8fe 100644
+--- a/src/modules/movements/store/movement.employee.store.ts
++++ b/src/modules/movements/store/movement.employee.store.ts
+@@ -150,6 +150,57 @@ class Info {
+     memo_files_info?: IMemoFileInfo
+ }
+ 
++const hasOwnKey = (source: any, key: string) => Boolean(source && Object.hasOwn(source, key))
++
++const cloneValue = (value: any) => {
++    if (value === undefined || value === null) return null
++    return typeof value === 'object' ? { ...value } : value
++}
++
++const getValueId = (value: any) => {
++    if (value === undefined || value === null) return null
++    return typeof value === 'object' ? value.id ?? null : value
++}
++
++const getRequesterMovementValue = (hrRequesterInfo: any, key: string) => {
++    if (!hrRequesterInfo || !key) return null
++
++    if (key === 'division') return hrRequesterInfo.unit_info
++
++    const infoKey = `${key}_info`
++    return hasOwnKey(hrRequesterInfo, infoKey) ? hrRequesterInfo[infoKey] : hrRequesterInfo[key]
++}
++
++export const mapMovementDefaultValue = (hrRequesterInfo: any, key: string) => {
++    let value = cloneValue(getRequesterMovementValue(hrRequesterInfo, key))
++
++    if (['horizontal_report_to', 'report_to'].includes(key) && value && typeof value === 'object') {
++        value = {
++            ...value,
++            ...(value.job !== undefined && { position: value.job }),
++        }
++        value = object.isEmpty(value) ? null : value
++    }
++
++    if (key === 'job_code' && value && typeof value === 'object') {
++        value = {
++            ...value,
++            ...(value.name && { name: value.position_name }),
++            job_grade: hrRequesterInfo?.job_grade_info?.id,
++            job_grade_name: hrRequesterInfo?.job_grade_info?.name,
++        }
++    }
++
++    const valueId = getValueId(value)
++
++    return {
++        from_value_object: cloneValue(value),
++        from_value_id: valueId,
++        to_value_object: cloneValue(value),
++        to_value_id: valueId,
++    }
++}
++
+ export const movementEmployeeStore = defineStore('movementFormData', () => {
+     const { t } = useI18n()
+     const approvalWorkFlow = ref([])
+@@ -901,42 +952,9 @@ export const movementEmployeeStore = defineStore('movementFormData', () => {
+             const row = {
+                 hr_ems_key: ems.hr_ems_key_info.id,
+                 hr_ems_key_info: ems.hr_ems_key_info,
+-                from_value_object: info.hr_requester_info?.[`${key}_info`],
+-                from_value_id: info.hr_requester_info?.[`${key}_info`]?.id,
+                 from_value_type: ems.hr_ems_key_info.object_type?.model,
+                 to_value_type: ems.hr_ems_key_info.object_type?.model,
+-            }
+-            if (key === 'division') {
+-                row.from_value_object = info.hr_requester_info?.['unit_info']
+-                row.from_value_id = info.hr_requester_info?.['unit_info']?.id
+-
+-                row.to_value_object = info.hr_requester_info?.['unit_info']
+-                row.to_value_id = info.hr_requester_info?.['unit_info']?.id
+-            } else {
+-                if (key === 'horizontal_report_to') {
+-                    const job = info.hr_requester_info?.horizontal_report_to_info?.job
+-                    const value = {
+-                        ...info.hr_requester_info?.horizontal_report_to_info,
+-                        ...(job !== undefined && { position: job }),
+-                    }
+-                    const finalValue = object.isObjectEmpty(value) ? null : { ...value }
+-                    row.from_value_object = row.to_value_object = finalValue
+-                } else if (key === 'report_to') {
+-                    const job = info.hr_requester_info?.report_to_info?.job
+-                    const value = {
+-                        ...info.hr_requester_info?.report_to_info,
+-                        ...(job !== undefined && { position: job }),
+-                    }
+-                    const finalValue = object.isObjectEmpty(value) ? null : { ...value }
+-                    row.from_value_object = row.to_value_object = finalValue
+-                } else {
+-                    row.from_value_object = row.to_value_object = info.hr_requester_info?.[`${key}_info`]
+-                }
+-                row.from_value_id = row.to_value_id = info.hr_requester_info?.[`${key}_info`]?.id
+-            }
+-            if (key === 'job_code' && row.from_value_object) {
+-                row.from_value_object.job_grade = info.hr_requester_info?.job_grade_info?.id
+-                row.from_value_object.job_grade_name = info.hr_requester_info?.job_grade_info?.name
++                ...mapMovementDefaultValue(info.hr_requester_info, key),
+             }
+             formData.value.hr_employee_movement_details.push(row)
+         })
+@@ -981,43 +999,7 @@ export const movementEmployeeStore = defineStore('movementFormData', () => {
+                 hr_ems_key_info: ems,
+                 from_value_type: ems.object_type?.model,
+                 to_value_type: ems.object_type?.model,
+-            }
+-            const key = ems.key
+-            if (key === 'division') {
+-                row.from_value_object = info.hr_requester_info['unit_info']
+-                row.from_value_id = info.hr_requester_info['unit_info']?.id
+-
+-                row.to_value_object = info.hr_requester_info['unit_info']
+-                row.to_value_id = info.hr_requester_info['unit_info']?.id
+-            } else {
+-                if (key === 'horizontal_report_to') {
+-                    const job = info.hr_requester_info?.horizontal_report_to_info?.job
+-                    const value = {
+-                        ...info.hr_requester_info?.horizontal_report_to_info,
+-                        ...(job !== undefined && { position: job }),
+-                    }
+-                    const finalValue = object.isEmpty(value) ? null : { ...value }
+-                    row.from_value_object = row.to_value_object = finalValue
+-                } else if (key === 'report_to') {
+-                    const job = info.hr_requester_info?.report_to_info?.job
+-                    const value = {
+-                        ...info.hr_requester_info?.report_to_info,
+-                        ...(job !== undefined && { position: job }),
+-                    }
+-                    const finalValue = object.isEmpty(value) ? null : { ...value }
+-                    row.from_value_object = row.to_value_object = finalValue
+-                } else {
+-                    row.from_value_object = row.to_value_object = info.hr_requester_info?.[`${key}_info`]
+-                }
+-                row.from_value_id = row.to_value_id = info.hr_requester_info[`${key}_info`]?.id
+-
+-                if (key === 'job_code' && row.from_value_object?.name) {
+-                    row.from_value_object.name = info.hr_requester_info[`${key}_info`]?.position_name
+-                }
+-                if (key === 'job_code' && row.from_value_object) {
+-                    row.from_value_object.job_grade = info.hr_requester_info?.job_grade_info?.id
+-                    row.from_value_object.job_grade_name = info.hr_requester_info?.job_grade_info?.name
+-                }
++                ...mapMovementDefaultValue(info.hr_requester_info, ems.key),
+             }
+             formData.value.hr_employee_movement_details.push(row)
+         })
+diff --git a/src/modules/movements/views/employee/detail.vue b/src/modules/movements/views/employee/detail.vue
+index c016902bb1..f200d2a038 100644
+--- a/src/modules/movements/views/employee/detail.vue
++++ b/src/modules/movements/views/employee/detail.vue
+@@ -1,6 +1,10 @@
+ <script setup lang="ts">
+     import { lookupService } from '@/atom/lookup/lookup.apis'
+-    import { movementEmployeeStore, MYearOfService } from '@@/movements/store/movement.employee.store'
++    import {
++        mapMovementDefaultValue,
++        movementEmployeeStore,
++        MYearOfService,
++    } from '@@/movements/store/movement.employee.store'
+     import ApiService from '@@/recruitments/services/job-offer.service'
+     import { addMonths, differenceInMonths, format } from 'date-fns'
+     import { dateFormat } from '@/utils/date'
+@@ -77,20 +81,7 @@
+         row.from_value_type = data.object_type.model
+         row.to_value_type = data.object_type.model
+         const hr_requester_info = store.info?.hr_requester_info
+-        if (data.key === 'division') {
+-            row.from_value_object = row.to_value_object = hr_requester_info['unit_info']
+-            row.from_value_id = row.to_value_id = hr_requester_info['unit_info']?.id
+-        } else if (data.key === 'job_code') {
+-            row.from_value_object = row.to_value_object = {
+-                ...hr_requester_info[`${data.key}_info`],
+-                job_grade: hr_requester_info?.job_grade_info?.id,
+-                job_grade_name: hr_requester_info?.job_grade_info?.name,
+-            }
+-            row.from_value_id = row.to_value_id = hr_requester_info[`${data.key}_info`]?.id
+-        } else {
+-            row.from_value_object = row.to_value_object = hr_requester_info[`${data.key}_info`]
+-            row.from_value_id = row.to_value_id = hr_requester_info[`${data.key}_info`]?.id
+-        }
++        Object.assign(row, mapMovementDefaultValue(hr_requester_info, data.key))
+     }
+ 
+     const getModel = (ind: number) => {
+-- 
+2.50.1.windows.1
+

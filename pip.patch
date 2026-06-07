@@ -1,0 +1,148 @@
+From 0cf40576c4cb8c02e7858c0465afa271cd887123 Mon Sep 17 00:00:00 2001
+From: "vyrapol.vutha" <vyrapol.vutha@wingbank.com.kh>
+Date: Sun, 7 Jun 2026 21:28:11 +0700
+Subject: [PATCH] feat: add Start Date for PIP
+
+---
+ src/modules/performances/locales/en.json      |  2 ++
+ src/modules/performances/locales/kh.json      |  2 ++
+ .../performances/store/goal-setting.ts        | 14 +++++++++-
+ src/modules/performances/types/TGoal.ts       |  2 ++
+ .../goal-setting/components/GoalDetails.vue   | 28 +++++++++++++++++--
+ 5 files changed, 45 insertions(+), 3 deletions(-)
+
+diff --git a/src/modules/performances/locales/en.json b/src/modules/performances/locales/en.json
+index b736787f68..9d265d8e4b 100644
+--- a/src/modules/performances/locales/en.json
++++ b/src/modules/performances/locales/en.json
+@@ -104,6 +104,8 @@
+         "batch_request": "Batch Request",
+         "adjust_weight": "Adjust Weight",
+         "total_score": "Total Score",
++        "start_date": "Start Date",
++        "end_date": "End Date",
+         "probation_end_date": "Probation End Date",
+         "request": "Request",
+         "complete": "Complete",
+diff --git a/src/modules/performances/locales/kh.json b/src/modules/performances/locales/kh.json
+index 4d05551fa3..83f274c762 100644
+--- a/src/modules/performances/locales/kh.json
++++ b/src/modules/performances/locales/kh.json
+@@ -106,6 +106,8 @@
+         "batch_request": "Batch Request",
+         "adjust_weight": "Adjust Weight",
+         "total_score": "Total Score",
++        "start_date": "កាលបរិច្ឆេទចាប់ផ្តើម",
++        "end_date": "កាលបរិច្ឆេទបញ្ចប់",
+         "probation_end_date": "Probation End Date",
+         "request": "Request",
+         "complete": "Complete",
+diff --git a/src/modules/performances/store/goal-setting.ts b/src/modules/performances/store/goal-setting.ts
+index 128deba48c..d5e802697f 100644
+--- a/src/modules/performances/store/goal-setting.ts
++++ b/src/modules/performances/store/goal-setting.ts
+@@ -104,7 +104,13 @@ export const useGoalSettingStore = defineStore('useGoalSettingStore', () => {
+                 (item.goal.goal_type.name = PERFORMANCE_TYPES.find(t => t.value === item.goal.goal_type.name)?.text),
+         },
+         {
+-            text: 'Deadline',
++            text: 'Start Date',
++            value: 'goal.display_start_date',
++            fieldType: 'date',
++            path: 'goal__start_date',
++        },
++        {
++            text: 'End Date',
+             value: 'goal.display_deadline',
+             fieldType: 'date',
+             path: 'goal__deadline',
+@@ -214,6 +220,9 @@ export const useGoalSettingStore = defineStore('useGoalSettingStore', () => {
+         formData.value.goal.year = tempValue.year
+         isBatch.value = isRequestingBatch.value
+         formData.value.batch = isBatch.value ? new Batch() : undefined
++        if (tempValue.goal_type?.value !== 'pip') {
++            formData.value.goal.start_date = ''
++        }
+         onStaffRelatedChange('')
+         confirmDialog.value = false
+     }
+@@ -238,6 +247,9 @@ export const useGoalSettingStore = defineStore('useGoalSettingStore', () => {
+             confirmDialog.value = true
+         } else {
+             formData.value.goal.goal_type = val?.id
++            if (val.value !== 'pip') {
++                formData.value.goal.start_date = ''
++            }
+             if (val.value === 'probation') {
+                 formData.value.goal.deadline = tempValue.hr_employee_info.probation_end_date ?? ''
+             }
+diff --git a/src/modules/performances/types/TGoal.ts b/src/modules/performances/types/TGoal.ts
+index 980f8cb10c..033fa143bd 100644
+--- a/src/modules/performances/types/TGoal.ts
++++ b/src/modules/performances/types/TGoal.ts
+@@ -272,6 +272,7 @@ export class Goal {
+     year = new Date().getFullYear().toString()
+     rating: string | null = null
+     goal_type = 0
++    start_date = ''
+     deadline = ''
+     description = ''
+     goal_objectives: Objective[] = []
+@@ -351,6 +352,7 @@ type TGoalInfo = {
+     description: string
+     goal_type: TGoalType
+     year: string
++    start_date: string
+     deadline: string
+     rating: Rating
+     kickoff: number
+diff --git a/src/modules/performances/views/goal-setting/components/GoalDetails.vue b/src/modules/performances/views/goal-setting/components/GoalDetails.vue
+index 108baba849..a475ce26ca 100644
+--- a/src/modules/performances/views/goal-setting/components/GoalDetails.vue
++++ b/src/modules/performances/views/goal-setting/components/GoalDetails.vue
+@@ -21,6 +21,12 @@
+     const { formData, info, isConverting, tempValue, isBatch, performanceTypes } = storeToRefs(store)
+ 
+     const goalType = computed(() => String(tempValue.value?.goal_type?.value))
++    const isPipType = computed(() => goalType.value === 'pip')
++    const endDateColumnMd = computed(() => {
++        if (isPipType.value) return 6
++        if (!props.isTypeStaff) return 12
++        return isBatch.value ? 4 : 3
++    })
+ 
+     const objectiveHeaders = computed(() => {
+         const headers = [...objectivePartialHeaders]
+@@ -170,9 +176,27 @@
+                         @update:model-value="onChangeYear"
+                     />
+                 </v-col>
+-                <v-col v-if="!isConverting" cols="12" :md="!isTypeStaff ? 12 : isBatch ? 4 : 3" class="pa-2">
++                <v-col v-if="!isConverting && isPipType" cols="12" md="6" class="pa-2">
++                    <label class="font-weight-medium text-body-2">
++                        {{ $t('goal_setting.start_date') }}
++                        <span class="text-error">*</span>
++                    </label>
++                    <base-field
++                        v-model="formData.goal.start_date"
++                        field-type="date"
++                        :label="null"
++                        :clearable="false"
++                        hide-details="auto"
++                        v-bind="getFieldProps('goal.start_date')"
++                    />
++                </v-col>
++                <v-col v-if="!isConverting" cols="12" :md="endDateColumnMd" class="pa-2">
+                     <label class="font-weight-medium text-body-2">
+-                        {{ goalType === 'probation' ? $t('goal_setting.probation_end_date') : $t('deadline') }}
++                        {{
++                            goalType === 'probation'
++                                ? $t('goal_setting.probation_end_date')
++                                : $t('goal_setting.end_date')
++                        }}
+                         <span class="text-error">*</span>
+                     </label>
+                     <base-field
+-- 
+2.50.1.windows.1
+

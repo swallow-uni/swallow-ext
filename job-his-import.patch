@@ -1,0 +1,68 @@
+From 78a410a9a9c401ab1a346260aaf0253e9c9dbd0a Mon Sep 17 00:00:00 2001
+From: "vyrapol.vutha" <vyrapol.vutha@wingbank.com.kh>
+Date: Sun, 7 Jun 2026 22:30:00 +0700
+Subject: [PATCH] add: import Job History
+
+---
+ src/atom/import/import.store.ts                      | 12 ++++++++----
+ .../pim/employee/forms/employment/JobHistory.vue     |  2 ++
+ 2 files changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/src/atom/import/import.store.ts b/src/atom/import/import.store.ts
+index c31b559b31..b56754b521 100644
+--- a/src/atom/import/import.store.ts
++++ b/src/atom/import/import.store.ts
+@@ -381,15 +381,15 @@ export const useImportStore = defineStore('importStore', () => {
+                     text: 'Employee ID',
+                     value: 'employee_id',
+                 },
++                {
++                    text: 'Job History ID',
++                    value: 'id',
++                },
+                 {
+                     text: 'Effective Date',
+                     value: 'effective_date',
+                     type: 'date',
+                 },
+-                // {
+-                //     text: 'Job Code',
+-                //     value: 'employment__job_code__code',
+-                // },
+                 {
+                     text: 'Rar Number',
+                     value: 'rar_number',
+@@ -406,6 +406,10 @@ export const useImportStore = defineStore('importStore', () => {
+                     text: 'Employment Status',
+                     value: 'employment_status__name',
+                 },
++                {
++                    text: 'Job Code',
++                    value: 'employment__job_code__code',
++                },
+                 {
+                     text: 'Position',
+                     value: 'job__name',
+diff --git a/src/views/pim/employee/forms/employment/JobHistory.vue b/src/views/pim/employee/forms/employment/JobHistory.vue
+index 265e9b337f..54a167d679 100644
+--- a/src/views/pim/employee/forms/employment/JobHistory.vue
++++ b/src/views/pim/employee/forms/employment/JobHistory.vue
+@@ -22,6 +22,7 @@
+                         <td :colspan="columns.length + 1" class="text-center">No records found</td>
+                     </tr>
+                     <tr v-for="(child, idx) in employeeMoveInfo" :key="idx">
++                        <td class="text-no-wrap py-2">{{ child.id || 'N/A' }}</td>
+                         <td class="text-no-wrap py-2">
+                             <div class="text-no-wrap mb-2">
+                                 <router-link
+@@ -157,6 +158,7 @@
+             formMode: '',
+             accessFormField: {},
+             columns: [
++                { value: 'id', text: 'ID' },
+                 { value: 'employee_id', text: 'Trans & Type' },
+                 { value: 'position', text: 'Position' },
+                 { value: 'division', text: 'Division' },
+-- 
+2.50.1.windows.1
+
