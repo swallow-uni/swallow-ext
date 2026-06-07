@@ -1,0 +1,469 @@
+From c780e9ab7caed7e5d7c89c598cb96fdd29bd849f Mon Sep 17 00:00:00 2001
+From: "vyrapol.vutha" <vyrapol.vutha@wingbank.com.kh>
+Date: Sun, 7 Jun 2026 23:14:48 +0700
+Subject: [PATCH] add: job applied in job offer
+
+---
+ .../recruitments/store/job-offer.store.ts     | 111 ++++++++++++------
+ .../views/applicant/forms/JobAppliedForm.vue  |  94 +++++++++++----
+ .../recruitments/views/job-offer/form.vue     |  37 ++++--
+ 3 files changed, 166 insertions(+), 76 deletions(-)
+
+diff --git a/src/modules/recruitments/store/job-offer.store.ts b/src/modules/recruitments/store/job-offer.store.ts
+index bfce773a4e..583fb12c1a 100644
+--- a/src/modules/recruitments/store/job-offer.store.ts
++++ b/src/modules/recruitments/store/job-offer.store.ts
+@@ -8,7 +8,7 @@ import type { ContractTemplateConfig, HrContractRenderTemplate, JobOfferForm } f
+ import type { IDefaultInfo, IEmployeeInfo } from '@/types/pim/IEmployee'
+ import moment from 'moment'
+ import type { IJobCode } from '../types/IJobCode'
+-import type { IApplicantFormData, THrApplicant } from '../types/IApplicant'
++import type { IApplicantFormData, THrApplicant, TJobAppliedApplicant } from '../types/IApplicant'
+ import type { IRarRequest } from '../types/IJobVacancies'
+ import { lookupService } from '@/atom/lookup/lookup.apis'
+ import { type PayGroup, PayrollDetail, type SalaryRule } from '@/types/Payroll'
+@@ -40,6 +40,77 @@ type TExtendPeriod = {
+     extended_expired_duration_of_mini_app: number
+ }
+ 
++const mapJobOfferJobAppliedApplicants = (items: any[] = []): TJobAppliedApplicant[] => {
++    return items.map(item => {
++        const jobAppliedInfo = typeof item.job_applied === 'object' ? item.job_applied : item.job_applied_info
++        const hrEmployeeInfo = typeof item.hr_employee === 'object' ? item.hr_employee : null
++
++        return {
++            ...item,
++            job_applied: jobAppliedInfo?.id ?? item.job_applied,
++            pipeline: item.pipeline_info ?? item.pipeline ?? null,
++            pipeline_info: item.pipeline_info ?? item.pipeline ?? null,
++            hr_employee: item.hr_employee_info?.hr_employee ?? hrEmployeeInfo?.id ?? item.hr_employee ?? null,
++            hr_employee_info:
++                item.hr_employee_info ??
++                (hrEmployeeInfo
++                    ? {
++                          hr_employee: hrEmployeeInfo.id,
++                          hr_employee_full_name: hrEmployeeInfo.full_name,
++                      }
++                    : null),
++            hr_employee_onbehalf: item.hr_employee_onbehalf?.id ?? item.hr_employee_onbehalf,
++            tag_manager:
++                item.tag_manager?.map((manager: any) => ({
++                    id: manager.hr_employee?.id ?? manager.id,
++                    hr_employee: manager.hr_employee,
++                    active: manager.active,
++                })) ?? [],
++            job_applied_applicant_benefit_allowances:
++                item.job_applied_applicant_benefit_allowances?.map((allowance: any) => ({
++                    ...allowance,
++                    allowance: allowance.allowance ?? {
++                        code: allowance.code,
++                        name: allowance.name,
++                    },
++                })) ?? [],
++            is_new: item.is_new ?? false,
++            applied_from: item.applied_from?.id ?? item.applied_from ?? null,
++            job_type: item.job_type ?? jobAppliedInfo?.job_type,
++            announcement_code: item.announcement_code ?? jobAppliedInfo?.announcement_code ?? jobAppliedInfo?.code,
++            position_name:
++                item.position_name ?? jobAppliedInfo?.position_name ?? jobAppliedInfo?.job_code?.position_info?.name,
++        } as TJobAppliedApplicant
++    })
++}
++
++const mapJobOfferApplicantInfo = (applicant: any): IApplicantFormData => {
++    return {
++        ...applicant,
++        religion: applicant?.religion_info?.id,
++        blood_type: applicant?.blood_type_info?.id,
++        marital_status: applicant?.marital_status_info?.id,
++        gender: applicant?.gender_info?.id ?? applicant?.gender,
++        applicant_document:
++            applicant?.applicant_document?.map((doc: any) => ({
++                ...doc,
++                name: doc.type_info?.name,
++            })) ?? [],
++        applicant_family:
++            applicant?.applicant_family?.map((family: any) => ({
++                ...family,
++                id: family.id,
++                full_name: family.full_name,
++                gender: family.family_gender_info,
++                nationality: family.nationality_info,
++                relationship: family?.family_relationship_info,
++            })) ?? [],
++        job_applied_applicants: mapJobOfferJobAppliedApplicants(
++            applicant?.job_applied_applicants ?? applicant?.job_applied_applicant ?? []
++        ),
++    } as IApplicantFormData
++}
++
+ interface IJobOfferStore {
+     formData: JobOfferForm & Partial<TBizPillarFormData>
+     appStore: any
+@@ -621,24 +692,7 @@ export const useJobOfferStore = defineStore('jobOfferStore', {
+                 ...data.hiring_manager,
+                 unit_info: { ...data.hiring_manager?.unit_info, parent_info: data.hiring_manager?.department_info },
+             }
+-            this.formData.hr_applicant_info = {
+-                ...data.hr_applicant,
+-                marital_status: data.hr_applicant?.marital_status_info?.id,
+-                gender: data.hr_applicant?.gender_info?.id,
+-                religion: data.hr_applicant?.religion_info?.id,
+-                blood_type: data.hr_applicant?.blood_type_info?.id,
+-                applicant_document: data.hr_applicant?.applicant_document.map(doc => ({
+-                    ...doc,
+-                    name: doc.type_info?.name,
+-                })),
+-                applicant_family: data?.hr_applicant?.applicant_family.map((family: any) => ({
+-                    ...family,
+-                    full_name: family.full_name,
+-                    gender: family.family_gender_info,
+-                    nationality: family.nationality_info,
+-                    relationship: family?.family_relationship_info,
+-                })),
+-            }
++            this.formData.hr_applicant_info = mapJobOfferApplicantInfo(data.hr_applicant)
+             this.formData.rar_number_info = {
+                 job_code: { ...data.rar_number?.hr_request_rar?.job_code_info },
+             }
+@@ -821,24 +875,7 @@ export const useJobOfferStore = defineStore('jobOfferStore', {
+                         job_code: this.job_code.id ?? 0,
+                     })
+                     const applicant = res.data.results.at(0)
+-                    this.formData.hr_applicant_info = {
+-                        ...applicant,
+-                        religion: applicant.religion_info?.id,
+-                        blood_type: applicant.blood_type_info?.id,
+-                        marital_status: applicant.marital_status_info?.id,
+-                        applicant_document: applicant?.applicant_document.map(doc => ({
+-                            ...doc,
+-                            name: doc.type_info?.name,
+-                        })),
+-                        applicant_family: applicant?.applicant_family.map((family: any) => ({
+-                            ...family,
+-                            id: family.id,
+-                            full_name: family.full_name,
+-                            gender: family.family_gender_info,
+-                            nationality: family.nationality_info,
+-                            relationship: family?.family_relationship_info,
+-                        })),
+-                    }
++                    this.formData.hr_applicant_info = mapJobOfferApplicantInfo(applicant)
+                     this.formData.user_name = await this.generateUsername(applicant)
+                     const emailMask = toLower(
+                         replace(
+diff --git a/src/modules/recruitments/views/applicant/forms/JobAppliedForm.vue b/src/modules/recruitments/views/applicant/forms/JobAppliedForm.vue
+index beab509688..e913fe7929 100644
+--- a/src/modules/recruitments/views/applicant/forms/JobAppliedForm.vue
++++ b/src/modules/recruitments/views/applicant/forms/JobAppliedForm.vue
+@@ -15,10 +15,18 @@
+     import type { TJobAppliedApplicant } from '@/modules/recruitments/types/IApplicant'
+ 
+     /* PROPS */
+-    const props = defineProps<{
+-        formMode: string
+-        formErrors: object
+-    }>()
++    const props = withDefaults(
++        defineProps<{
++            formMode: string
++            formErrors?: Record<string, any>
++            items?: TJobAppliedApplicant[]
++            applicantId?: number | string | null
++        }>(),
++        {
++            formErrors: () => ({}),
++            applicantId: null,
++        }
++    )
+ 
+     /* STATES */
+     const route = useRoute()
+@@ -29,6 +37,7 @@
+     const editingJobApplied = ref<TJobAppliedApplicant | null>(null)
+     const activeAllowance = ref<boolean>(false)
+     const tempAllowanceData = ref<any[]>([])
++    const localCurrentRow = ref<number>(0)
+ 
+     const headers = ref<any[]>([
+         {
+@@ -146,13 +155,47 @@
+         },
+     ]
+ 
++    const routeApplicantId = computed(() => {
++        const routeId = route.params.id
++
++        return Array.isArray(routeId) ? routeId.at(0) : routeId
++    })
++    const jobAppliedApplicants = computed(() => props.items ?? store.formData.job_applied_applicants)
++    const selectedApplicantId = computed(() => props.applicantId ?? routeApplicantId.value ?? null)
++    const canManageJobApplied = computed(() => props.formMode !== 'view')
++    const isReading = computed(() => (props.items ? false : store.reading))
++    const currentRowValue = computed(() => (props.items ? localCurrentRow.value : store.currentRow))
++    const displayedJobAppliedHeaders = computed(() =>
++        jobAppliedHeaders.map(column =>
++            column.value === 'actions' ? { ...column, hidden: !canManageJobApplied.value } : column
++        )
++    )
++    const visibleColumnCount = computed(
++        () => displayedJobAppliedHeaders.value.filter(column => !column.hidden).length + 1
++    )
++
+     /* METHODS */
++    const getFieldMode = (row: number) => {
++        return currentRowValue.value === row ? props.formMode : 'view'
++    }
++
++    const setCurrentRow = (row: number) => {
++        if (props.items) {
++            localCurrentRow.value = row
++            return
++        }
++
++        store.currentRow = row
++    }
++
+     const onViewHistory = async (job_applied_id: string): Promise<any> => {
++        if (!selectedApplicantId.value) return
++
+         activeHistory.value = true
+         isLoading.value = true
+         await jobAppliedService
+             .getApplicantHistory({
+-                hr_applicant: route.params.id.toString(),
++                hr_applicant: selectedApplicantId.value.toString(),
+                 job_applied: job_applied_id,
+             })
+             .then((resp: any) => {
+@@ -205,15 +248,13 @@
+         editingJobApplied.value.job_applied_applicant_benefit_allowances = cloneDeep(tempAllowanceData.value)
+     }
+ 
+-    const getSelectedItemIds = computed(() =>
+-        store.formData.job_applied_applicants.flatMap(f => ({ id: f.job_applied }))
+-    )
++    const getSelectedItemIds = computed(() => jobAppliedApplicants.value.flatMap(f => ({ id: f.job_applied })))
+ </script>
+ 
+ <template>
+     <section-title text="JOB APPLIED" class="mt-7">
+         <v-btn
+-            v-if="formMode !== 'view'"
++            v-if="canManageJobApplied"
+             color="primary"
+             prepend-icon="mdi-plus"
+             size="small"
+@@ -229,7 +270,7 @@
+         <thead>
+             <tr>
+                 <th scope="column" class="header-table-bg">#</th>
+-                <template v-for="column in jobAppliedHeaders" :key="column.text">
++                <template v-for="column in displayedJobAppliedHeaders" :key="column.value">
+                     <th
+                         v-if="!column.hidden"
+                         scope="column"
+@@ -243,21 +284,21 @@
+             </tr>
+         </thead>
+         <tbody>
+-            <tr v-if="store.reading">
+-                <td :colspan="jobAppliedHeaders.length + 1" class="text-center">
++            <tr v-if="isReading">
++                <td :colspan="visibleColumnCount" class="text-center">
+                     <v-progress-circular color="secondary" indeterminate></v-progress-circular>
+                 </td>
+             </tr>
+             <template v-else>
+-                <tr v-if="!store.formData.job_applied_applicants.length">
+-                    <td :colspan="jobAppliedHeaders.length + 1" class="text-center">No matching records found</td>
++                <tr v-if="!jobAppliedApplicants.length">
++                    <td :colspan="visibleColumnCount" class="text-center">No matching records found</td>
+                 </tr>
+                 <tr
+-                    v-for="(item, row) in store.formData.job_applied_applicants"
++                    v-for="(item, row) in jobAppliedApplicants"
+                     :key="row"
+-                    :class="store.currentRow === row ? 'active-bg' : 'inactive'"
++                    :class="currentRowValue === row ? 'active-bg' : 'inactive'"
+                     class="cursor-pointer"
+-                    @click="store.currentRow = row"
++                    @click="setCurrentRow(row)"
+                 >
+                     <td class="text-no-wrap mb-2">
+                         {{ row + 1 }}
+@@ -288,7 +329,7 @@
+                             hide-details="auto"
+                             :error-messages="formErrors?.job_applied_applicants?.[row]?.applied_date"
+                             :model-value="item.applied_date"
+-                            :mode="store.currentRow === row ? formMode : 'view'"
++                            :mode="getFieldMode(row)"
+                             @update:model-value="item.applied_date = $event"
+                         />
+                     </td>
+@@ -304,8 +345,8 @@
+                             item-title="code"
+                             item-value="id"
+                             return-object
+-                            :disabled="!item.is_new"
+-                            :mode="store.currentRow === row ? formMode : 'view'"
++                            :disabled="formMode === 'view' || !item.is_new"
++                            :mode="getFieldMode(row)"
+                             @focus="item.pipeline_info = null"
+                         />
+                     </td>
+@@ -317,7 +358,7 @@
+                             :items="useEmployeeFormValueStore().LOV.recruitment_channel"
+                             :clearable="false"
+                             :error-messages="formErrors?.job_applied_applicants?.[row]?.applied_from"
+-                            :mode="store.currentRow === row ? formMode : 'view'"
++                            :mode="getFieldMode(row)"
+                         />
+                     </td>
+                     <td class="text-no-wrap">
+@@ -331,7 +372,7 @@
+                             :items="item.hr_employee_info"
+                             item-title="hr_employee_full_name"
+                             item-value="hr_employee"
+-                            :mode="store.currentRow === row ? formMode : 'view'"
++                            :mode="getFieldMode(row)"
+                             :payload="{
+                                 content_type_name: 'jobappliedrecruitmentteam',
+                                 paging: true,
+@@ -350,7 +391,7 @@
+                             type="number"
+                             suffix="USD"
+                             hide-details="auto"
+-                            :mode="store.currentRow === row ? formMode : 'view'"
++                            :mode="getFieldMode(row)"
+                         />
+                     </td>
+                     <td class="text-no-wrap text-center">
+@@ -360,7 +401,7 @@
+                             type="number"
+                             suffix="USD"
+                             hide-details="auto"
+-                            :mode="store.currentRow === row ? formMode : 'view'"
++                            :mode="getFieldMode(row)"
+                         />
+                     </td>
+                     <td class="text-center">
+@@ -383,7 +424,7 @@
+                         >
+                         </v-btn>
+                     </td>
+-                    <td class="text-center">
++                    <td v-if="canManageJobApplied" class="text-center">
+                         <v-btn
+                             color="error"
+                             icon="mdi-trash-can-outline"
+@@ -510,6 +551,7 @@
+ 
+     <!-- Add Applicant Dialog -->
+     <choice-dialog
++        v-if="canManageJobApplied"
+         min-height="80vh"
+         min-width="80vw"
+         title="Job Applied"
+@@ -581,7 +623,7 @@
+     </choice-dialog>
+ 
+     <!-- remove job applied dialog -->
+-    <v-dialog v-model="store.deleteDialog" max-width="300">
++    <v-dialog v-if="canManageJobApplied" v-model="store.deleteDialog" max-width="300">
+         <v-card style="border-radius: 10px">
+             <v-card-title class="text-h6 font-weight-bold mt-3">
+                 {{ $t('base.table.confirm_delete') }}
+diff --git a/src/modules/recruitments/views/job-offer/form.vue b/src/modules/recruitments/views/job-offer/form.vue
+index 230b2d82b7..bd85a2ec24 100644
+--- a/src/modules/recruitments/views/job-offer/form.vue
++++ b/src/modules/recruitments/views/job-offer/form.vue
+@@ -28,6 +28,7 @@
+     import ApplicantDocument from '@@/recruitments/components/ApplicantDocument.vue'
+     import FamilyInfo from '@@/recruitments/views/job-offer/form/FamilyInfo.vue'
+     import BizPillar from '@/components/Form/BizPillar.vue'
++    import JobAppliedForm from '@@/recruitments/views/applicant/forms/JobAppliedForm.vue'
+ 
+     /* STATES */
+     const store = useJobOfferStore()
+@@ -43,6 +44,7 @@
+             { title: 'Offer', value: 'offer', hidden: !isOfferTabEnable.value },
+             { title: 'Contract', value: 'contract', hidden: false },
+             { title: 'User', value: 'user', hidden: store.hrApplicantSelect?.employee?.id },
++            { title: 'Job Applied', value: 'job_applied', hidden: false },
+             { title: 'Document', value: 'document', hidden: false },
+             { title: 'Approvers', value: 'approvers', hidden: store.formData.status === APPROVAL_STATUS.DRAFT },
+         ]
+@@ -104,6 +106,14 @@
+     const isOfferTabEnable = computed(() =>
+         Boolean(children.filter(c => c.type === 'action' && c.url_path === '/recruitments/job-offer/offer').length)
+     )
++    const canSendOffer = computed(
++        () =>
++            (has(store.formData, 'is_enable_telegram') &&
++                store.formData.is_enable_telegram &&
++                !store.formData?.is_released &&
++                store.isApprove) ||
++            store.candidateNotStart
++    )
+ 
+     const onSelectEmployee = (emp: IEmployeeInfo): void => {
+         store.formData.hr_employee = emp?.id
+@@ -304,13 +314,7 @@
+                     Resubmit
+                 </v-btn>
+                 <v-btn
+-                    v-if="
+-                        (has(store.formData, 'is_enable_telegram') &&
+-                            store.formData.is_enable_telegram &&
+-                            !store.formData?.is_released &&
+-                            store.isApprove) ||
+-                        store.candidateNotStart
+-                    "
++                    v-if="canSendOffer"
+                     variant="outlined"
+                     color="warning"
+                     :loading="store.loading === 'send_offer'"
+@@ -554,6 +558,13 @@
+                         <v-window-item v-if="!store.hrApplicantSelect?.employee?.id" value="user">
+                             <UserForm :get-field-props="getFieldProps"></UserForm>
+                         </v-window-item>
++                        <v-window-item value="job_applied">
++                            <JobAppliedForm
++                                form-mode="view"
++                                :applicant-id="store.formData.hr_applicant"
++                                :items="store.formData.hr_applicant_info?.job_applied_applicants ?? []"
++                            />
++                        </v-window-item>
+                         <v-window-item value="document">
+                             <section-title text="Document Information" class="mt-7" />
+                             <section style="font-size: 0.875rem">
+@@ -587,9 +598,9 @@
+                     ></div>
+                     <div v-for="i in 3" :key="i" class="d-flex my-4">
+                         <Skeleton
+-                            v-for="i in 3"
+-                            :key="i"
+-                            :class="{ 'mx-2': i % 2 === 0 }"
++                            v-for="j in 3"
++                            :key="j"
++                            :class="{ 'mx-2': j % 2 === 0 }"
+                             class="flex-grow-1"
+                             :model-value="true"
+                             height="3.3rem"
+@@ -602,9 +613,9 @@
+                     ></div>
+                     <div v-for="i in 2" :key="i" class="d-flex my-4">
+                         <Skeleton
+-                            v-for="i in 3"
+-                            :key="i"
+-                            :class="{ 'mx-2': i % 2 === 0 }"
++                            v-for="j in 3"
++                            :key="j"
++                            :class="{ 'mx-2': j % 2 === 0 }"
+                             class="flex-grow-1"
+                             :model-value="true"
+                             height="3.3rem"
+-- 
+2.50.1.windows.1
+
