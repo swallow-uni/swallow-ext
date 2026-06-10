@@ -1,0 +1,1878 @@
+From f190f1600762b7ed2e2bf952dd3ad2eb75680c92 Mon Sep 17 00:00:00 2001
+From: "vyrapol.vutha" <vyrapol.vutha@wingbank.com.kh>
+Date: Thu, 11 Jun 2026 00:53:55 +0700
+Subject: [PATCH] add: batch approval action
+
+---
+ src/atom/workflow/workflow.api.ts             | 166 ++++++++++--------
+ .../workflow/BatchApprovalAction.vue          |  61 +++++++
+ .../useTransactionBatchApproval.ts            |  90 ++++++++++
+ .../account-payable-bill/index.vue            |  63 +++++--
+ .../views/transaction/payment/index.vue       |  66 +++++--
+ .../views/transaction/invoice/index.vue       |  43 ++++-
+ .../views/transaction/payment/index.vue       |  38 +++-
+ .../views/transaction/adjustment/index.vue    |  25 ++-
+ .../views/transaction/issue/index.vue         |  25 ++-
+ .../views/transaction/production/index.vue    |  31 +++-
+ .../views/transaction/receipt/index.vue       |  35 +++-
+ .../views/transaction/transfer/index.vue      |  25 ++-
+ .../transaction/transfer_request/index.vue    |  25 ++-
+ .../transaction/purchase-order/index.vue      |  27 +++
+ .../transaction/purchase-receipt/index.vue    |  27 +++
+ .../transaction/purchase-request/index.vue    |  26 +++
+ .../transaction/sourcing-vendor/index.vue     |  28 ++-
+ .../views/finance/employee-advance/index.vue  |  28 +++
+ .../finance/employee-settlement/index.vue     |  28 +++
+ .../views/finance/expense-receipt/index.vue   |  28 +++
+ .../views/transaction/sale-order/index.vue    |  35 +++-
+ .../views/transaction/sale-shipment/index.vue |  27 +++
+ .../views/travel-request/index.vue            |  28 +++
+ 23 files changed, 836 insertions(+), 139 deletions(-)
+ create mode 100644 src/components/workflow/BatchApprovalAction.vue
+ create mode 100644 src/composables/useTransactionBatchApproval.ts
+
+diff --git a/src/atom/workflow/workflow.api.ts b/src/atom/workflow/workflow.api.ts
+index b1c24fcbbf..ed65c039b3 100644
+--- a/src/atom/workflow/workflow.api.ts
++++ b/src/atom/workflow/workflow.api.ts
+@@ -1,84 +1,94 @@
+-import axios from "axios";
++import axios from 'axios'
++
++export type WorkflowTransactionBatchApprovalPayload = {
++    content_type: string
++    transaction_ids: number[]
++}
+ 
+ export const workflowServices = {
+-  get: async (params: any) => {
+-    return axios.get("workflows/look_up", { params });
+-  },
+-  submit: async (params: any) => {
+-    return axios.put("workflows/submit", params);
+-  },
+-  approve: async (params: any) => {
+-    return axios.put("workflows/approve", params);
+-  },
+-  revert: async (params: any) => {
+-    return axios.put("workflows/revert", params);
+-  },
+-  revertToDraft: async (params: any) => {
+-    return axios.put("workflows/revert_to_draft", params);
+-  },
+-  reject: async (params: any) => {
+-    return axios.put("workflows/reject", params);
+-  },
+-  complete: async (params: any) => {
+-    return axios.put("workflows/complete", params);
+-  },
+-  assign: async (params: any) => {
+-    return axios.put("workflows/assign", params);
+-  },
+-  assignToMe: async (params: any) => {
+-    return axios.put("workflows/assign_to_me", params);
+-  },
+-  submitToReviewer: async (params: any) => {
+-    return axios.put("workflows/submit_to_reviewer", params);
+-  },
+-  pushNotify: async (id: any) => {
+-    return axios.get(`workflows/${id}/push_notify`);
+-  },
+-  sendback: async (params: any) => {
+-    return axios.put("workflows/send_back", params);
+-  },
+-  override: async (params: any) => {
+-    return axios.put("workflows/override_approve", params);
+-  }
+-};
++    get: async (params: any) => {
++        return axios.get('workflows/look_up', { params })
++    },
++    batchApproval: async (params: WorkflowTransactionBatchApprovalPayload) => {
++        return axios.put('workflows/bulk_approve', params)
++    },
++    submit: async (params: any) => {
++        return axios.put('workflows/submit', params)
++    },
++    approve: async (params: any) => {
++        return axios.put('workflows/approve', params)
++    },
++    revert: async (params: any) => {
++        return axios.put('workflows/revert', params)
++    },
++    revertToDraft: async (params: any) => {
++        return axios.put('workflows/revert_to_draft', params)
++    },
++    reject: async (params: any) => {
++        return axios.put('workflows/reject', params)
++    },
++    complete: async (params: any) => {
++        return axios.put('workflows/complete', params)
++    },
++    assign: async (params: any) => {
++        return axios.put('workflows/assign', params)
++    },
++    assignToMe: async (params: any) => {
++        return axios.put('workflows/assign_to_me', params)
++    },
++    submitToReviewer: async (params: any) => {
++        return axios.put('workflows/submit_to_reviewer', params)
++    },
++    pushNotify: async (id: any) => {
++        return axios.get(`workflows/${id}/push_notify`)
++    },
++    sendback: async (params: any) => {
++        return axios.put('workflows/send_back', params)
++    },
++    override: async (params: any) => {
++        return axios.put('workflows/override_approve', params)
++    },
++}
+ 
+ export const stepMemberServices = {
+-  get: async (step_id: string) => {
+-    return axios.get("workflows/step_members", { params: { step_id } });
+-  },
+-  member: async (content_type: string, object_id: any, params?: any) => {
+-    return axios.get(`workflows/look_up/members/${content_type}/${object_id}`, { params: {
+-      ...params,
+-      scopes: "status,type,step__title,employee__full_name",
+-      page_size: 1000
+-    }});
+-  },
+-  addApprover: async (id: any, content_type: string, emp_id: number, stepId?: number) => {
+-    return axios.put(`workflows/add_approver`, {
+-      object_id: id,
+-      content_type: content_type,
+-      employee: emp_id,
+-      step_id: stepId
+-    });
+-  },
+-  addMember: async (id: any, content_type: string, emp_id: number) => {
+-    return axios.put(`workflows/add_member`, {
+-      object_id: id,
+-      content_type: content_type,
+-      employee: emp_id
+-    });
+-  },
+-  addDelegatee: async (id: any, content_type: string, emp_id: number) => {
+-    return axios.put(`workflows/delegate`, {
+-      object_id: id,
+-      content_type: content_type,
+-      employee: emp_id
+-    });
+-  },
+-};
++    get: async (step_id: string) => {
++        return axios.get('workflows/step_members', { params: { step_id } })
++    },
++    member: async (content_type: string, object_id: any, params?: any) => {
++        return axios.get(`workflows/look_up/members/${content_type}/${object_id}`, {
++            params: {
++                ...params,
++                scopes: 'status,type,step__title,employee__full_name',
++                page_size: 1000,
++            },
++        })
++    },
++    addApprover: async (id: any, content_type: string, emp_id: number, stepId?: number) => {
++        return axios.put(`workflows/add_approver`, {
++            object_id: id,
++            content_type: content_type,
++            employee: emp_id,
++            step_id: stepId,
++        })
++    },
++    addMember: async (id: any, content_type: string, emp_id: number) => {
++        return axios.put(`workflows/add_member`, {
++            object_id: id,
++            content_type: content_type,
++            employee: emp_id,
++        })
++    },
++    addDelegatee: async (id: any, content_type: string, emp_id: number) => {
++        return axios.put(`workflows/delegate`, {
++            object_id: id,
++            content_type: content_type,
++            employee: emp_id,
++        })
++    },
++}
+ 
+ export const workflowPermissionServices = {
+-  get: async (params: any) => {
+-    return axios.get("workflows/permission", { params });
+-  },
+-};
++    get: async (params: any) => {
++        return axios.get('workflows/permission', { params })
++    },
++}
+diff --git a/src/components/workflow/BatchApprovalAction.vue b/src/components/workflow/BatchApprovalAction.vue
+new file mode 100644
+index 0000000000..0884ce7c47
+--- /dev/null
++++ b/src/components/workflow/BatchApprovalAction.vue
+@@ -0,0 +1,61 @@
++<template>
++    <div v-if="selectedCount" class="d-flex gap-4 mx-4">
++        <v-btn color="primary" variant="flat" @click="dialogModel = true">
++            {{ actionLabel }}
++        </v-btn>
++
++        <v-dialog v-model="dialogModel" class="position-top" width="auto" transition="slide-y-transition">
++            <v-card class="pa-4">
++                <v-card-title class="pa-0 text-h5 text-capitalize">
++                    {{ title }}
++                </v-card-title>
++
++                <v-card-text class="pa-0 mt-4 mb-2">
++                    When you click "CONFIRM",
++                    <strong class="text-primary">{{ selectedCount }} selected {{ itemLabel }}</strong>
++                    will be approved. They will disappear from the pending list once processed.
++                </v-card-text>
++
++                <v-card-actions class="pa-0 align-end">
++                    <v-spacer />
++                    <v-btn color="primary" size="small" variant="tonal" :loading="loading" @click="$emit('confirm')">
++                        Confirm
++                    </v-btn>
++                    <v-btn color="default" size="small" variant="text" :disabled="loading" @click="dialogModel = false">
++                        Discard
++                    </v-btn>
++                </v-card-actions>
++            </v-card>
++        </v-dialog>
++
++        <v-btn color="default" variant="outlined" @click="$emit('clear')"> Clear </v-btn>
++    </div>
++</template>
++
++<script lang="ts" setup>
++    import { computed } from 'vue'
++
++    const props = withDefaults(
++        defineProps<{
++            modelValue: boolean
++            selectedCount: number
++            loading?: boolean
++            actionLabel?: string
++            title?: string
++            itemLabel?: string
++        }>(),
++        {
++            loading: false,
++            actionLabel: 'Approve',
++            title: 'Batch Approve',
++            itemLabel: 'item(s)',
++        }
++    )
++
++    const emit = defineEmits(['update:modelValue', 'confirm', 'clear'])
++
++    const dialogModel = computed({
++        get: () => props.modelValue,
++        set: value => emit('update:modelValue', value),
++    })
++</script>
+diff --git a/src/composables/useTransactionBatchApproval.ts b/src/composables/useTransactionBatchApproval.ts
+new file mode 100644
+index 0000000000..6053a4c759
+--- /dev/null
++++ b/src/composables/useTransactionBatchApproval.ts
+@@ -0,0 +1,90 @@
++import { computed, ref, unref, watch, type ComputedRef, type Ref } from 'vue'
++import { useRoute, useRouter } from 'vue-router'
++import { workflowServices } from '@/atom/workflow/workflow.api'
++import { useCustomToast } from '@/composables/useCustomToast'
++import { POSITION, TYPE } from 'vue-toastification'
++
++type ReactiveValue<T> = T | ComputedRef<T> | Ref<T>
++
++type UseTransactionBatchApprovalOptions = {
++    contentType: ReactiveValue<string>
++    isEnabled: ComputedRef<boolean> | Ref<boolean>
++    checkedIds?: Ref<number[]>
++    resetKey?: ReactiveValue<unknown>
++    reload?: () => void
++    successMessage?: string
++    errorMessage?: string
++}
++
++export const useTransactionBatchApproval = (options: UseTransactionBatchApprovalOptions) => {
++    const {
++        contentType,
++        isEnabled,
++        resetKey,
++        reload,
++        successMessage = 'Approved success!',
++        errorMessage = 'Error during approval.',
++    } = options
++    const route = useRoute()
++    const router = useRouter()
++    const checkedIds = options.checkedIds ?? ref<number[]>([])
++    const processedTransactionIds = ref<number[]>([])
++    const popConfirm = ref(false)
++    const isApproving = ref(false)
++
++    const selectedTransactionIds = computed(() => [...new Set(checkedIds.value)])
++
++    const exclusionQueryParams = computed(() => ({
++        pk:
++            isEnabled.value && processedTransactionIds.value.length
++                ? `not_in,[${processedTransactionIds.value.join(',')}]`
++                : undefined,
++    }))
++
++    const clearSelection = () => {
++        checkedIds.value = []
++    }
++
++    const reset = () => {
++        clearSelection()
++        processedTransactionIds.value = []
++        popConfirm.value = false
++    }
++
++    const batchApprove = async () => {
++        if (!isEnabled.value || !selectedTransactionIds.value.length) return
++
++        isApproving.value = true
++        try {
++            await workflowServices.batchApproval({
++                content_type: unref(contentType),
++                transaction_ids: selectedTransactionIds.value,
++            })
++
++            processedTransactionIds.value = [
++                ...new Set([...processedTransactionIds.value, ...selectedTransactionIds.value]),
++            ]
++            clearSelection()
++            popConfirm.value = false
++            useCustomToast(TYPE.SUCCESS, POSITION.TOP_CENTER, '', successMessage, 3000)
++            await router.replace({ query: { ...route.query, page: 1 } })
++            reload?.()
++        } catch (error) {
++            useCustomToast(TYPE.ERROR, POSITION.TOP_CENTER, '', errorMessage, 3000)
++        } finally {
++            isApproving.value = false
++        }
++    }
++
++    watch(() => [isEnabled.value, resetKey ? unref(resetKey) : undefined], reset)
++
++    return {
++        checkedIds,
++        clearSelection,
++        exclusionQueryParams,
++        isApproving,
++        popConfirm,
++        batchApprove,
++        reset,
++    }
++}
+diff --git a/src/modules/account-payable/views/transaction/account-payable-bill/index.vue b/src/modules/account-payable/views/transaction/account-payable-bill/index.vue
+index df301b8792..b5db936226 100644
+--- a/src/modules/account-payable/views/transaction/account-payable-bill/index.vue
++++ b/src/modules/account-payable/views/transaction/account-payable-bill/index.vue
+@@ -11,12 +11,28 @@
+         :exportable="true"
+         :title="$route.meta.title"
+         :linked-model="$consts.CONTENT_TYPE.ACCOUNT_ACCOUNT_PAYABLE"
+-        :batch-action="isPaymentUnpostingRecordsRouteGroup"
++        :batch-action="isBatchActionEnabled"
++        :query-params="exclusionQueryParams"
+         @view="onView"
+         @result-items="handleResultItems"
+     >
+-        <template v-if="isPaymentUnpostingRecordsRouteGroup" #app-bar-action>
+-            <v-btn color="primary" class="ml-2" :loading="isPosting" :disabled="!checkedIds.length" @click="post">
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++            <v-btn
++                v-if="isPaymentUnpostingRecordsRouteGroup"
++                color="primary"
++                class="ml-2"
++                :loading="isPosting"
++                :disabled="!checkedIds.length"
++                @click="post"
++            >
+                 <span>Post</span>
+             </v-btn>
+         </template>
+@@ -94,44 +110,44 @@
+             />
+         </template>
+ 
+-        <template #reference_no="{ item, search }">
++        <template #reference_no="{ item: tableItem, search }">
+             <router-link
+-                v-if="item.id"
++                v-if="tableItem.id"
+                 v-highLight-text="{
+-                    text: item.reference_no,
++                    text: tableItem.reference_no,
+                     searchText: search,
+                 }"
+                 class="text-no-wrap"
+                 target="_blank"
+-                :to="{ name: `${activeTab.routeGroup}.view`, params: { id: item.id } }"
++                :to="{ name: `${activeTab.routeGroup}.view`, params: { id: tableItem.id } }"
+                 rel="noopener"
+                 @click.stop
+             />
+         </template>
+-        <template #description="{ item, search }">
++        <template #description="{ item: tableItem, search }">
+             <p
+                 v-highLight-text="{
+-                    text: item.description,
++                    text: tableItem.description,
+                     searchText: search,
+                 }"
+                 v-tooltip-overflow
+                 style="max-width: 20rem"
+             ></p>
+         </template>
+-        <template #account_name="{ item, search }">
++        <template #account_name="{ item: tableItem, search }">
+             <p
+                 v-highLight-text="{
+-                    text: item.ap_bank_info?.account_name,
++                    text: tableItem.ap_bank_info?.account_name,
+                     searchText: search,
+                 }"
+                 v-tooltip-overflow
+                 style="max-width: 20rem"
+             ></p>
+         </template>
+-        <template #account_number="{ item, search }">
++        <template #account_number="{ item: tableItem, search }">
+             <p
+                 v-highLight-text="{
+-                    text: item.ap_bank_info?.account_number,
++                    text: tableItem.ap_bank_info?.account_number,
+                     searchText: search,
+                 }"
+                 v-tooltip-overflow
+@@ -225,7 +241,8 @@
+     import BaseCtaButton from '@/components/Buttons/BaseCtaButton.vue'
+     import { getMenuTabs } from '@/helpers/permission'
+     import { useAppStore } from '@/atom/app/app.stores'
+-    import { CREATED_LAST_MODIFIED_COLUMN } from '@/data/constants'
++    import { CONTENT_TYPE, CREATED_LAST_MODIFIED_COLUMN } from '@/data/constants'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const router = useRouter()
+@@ -392,6 +409,24 @@
+         }
+         return routeGroup.value === 'account-payable-bill-unposting-records'
+     })
++    const isPendingByMeTab = computed(() => {
++        if ((route.name as string).includes('expense-bill')) {
++            return routeGroup.value === 'expense-bill-pending-by-me'
++        }
++        return routeGroup.value === 'account-payable-bill-pending-by-me'
++    })
++    const isBatchActionEnabled = computed(() => isPendingByMeTab.value || isPaymentUnpostingRecordsRouteGroup.value)
++    const { clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } = useTransactionBatchApproval(
++        {
++            contentType: CONTENT_TYPE.ACCOUNT_ACCOUNT_PAYABLE,
++            isEnabled: isPendingByMeTab,
++            checkedIds,
++            resetKey: routeGroup,
++            reload: () => {
++                tableKey.value++
++            },
++        }
++    )
+     watch(
+         items,
+         newItems => {
+diff --git a/src/modules/account-payable/views/transaction/payment/index.vue b/src/modules/account-payable/views/transaction/payment/index.vue
+index c244e94e9d..f83d7cd868 100644
+--- a/src/modules/account-payable/views/transaction/payment/index.vue
++++ b/src/modules/account-payable/views/transaction/payment/index.vue
+@@ -11,12 +11,28 @@
+         :exportable="true"
+         :title="$route.meta.title"
+         :linked-model="$consts.CONTENT_TYPE.ACCOUNT_PAYMENT"
+-        :batch-action="isPaymentUnpostingRecordsRouteGroup"
++        :batch-action="isBatchActionEnabled"
++        :query-params="exclusionQueryParams"
+         @view="onView"
+         @result-items="handleResultItems"
+     >
+-        <template v-if="isPaymentUnpostingRecordsRouteGroup" #app-bar-action>
+-            <v-btn color="primary" class="ml-2" :loading="isPosting" :disabled="!checkedIds.length" @click="post">
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++            <v-btn
++                v-if="isPaymentUnpostingRecordsRouteGroup"
++                color="primary"
++                class="ml-2"
++                :loading="isPosting"
++                :disabled="!checkedIds.length"
++                @click="post"
++            >
+                 <span>Post</span>
+             </v-btn>
+         </template>
+@@ -94,25 +110,25 @@
+             />
+         </template>
+ 
+-        <template #reference_no="{ item, search }">
++        <template #reference_no="{ item: tableItem, search }">
+             <router-link
+-                v-if="item.id"
++                v-if="tableItem.id"
+                 v-highLight-text="{
+-                    text: item.reference_no,
++                    text: tableItem.reference_no,
+                     searchText: search,
+                 }"
+                 class="text-no-wrap"
+                 target="_blank"
+-                :to="{ name: `${activeTab.routeGroup}.view`, params: { id: item.id } }"
++                :to="{ name: `${activeTab.routeGroup}.view`, params: { id: tableItem.id } }"
+                 rel="noopener"
+                 @click.stop
+             />
+         </template>
+ 
+-        <template #description="{ item, search }">
++        <template #description="{ item: tableItem, search }">
+             <p
+                 v-highLight-text="{
+-                    text: item.description,
++                    text: tableItem.description,
+                     searchText: search,
+                 }"
+                 v-tooltip-overflow
+@@ -120,10 +136,10 @@
+             ></p>
+         </template>
+ 
+-        <template #account_name="{ item, search }">
++        <template #account_name="{ item: tableItem, search }">
+             <p
+                 v-highLight-text="{
+-                    text: item.ap_bank_info?.account_name,
++                    text: tableItem.ap_bank_info?.account_name,
+                     searchText: search,
+                 }"
+                 v-tooltip-overflow
+@@ -131,10 +147,10 @@
+             ></p>
+         </template>
+ 
+-        <template #account_number="{ item, search }">
++        <template #account_number="{ item: tableItem, search }">
+             <p
+                 v-highLight-text="{
+-                    text: item.ap_bank_info?.account_number,
++                    text: tableItem.ap_bank_info?.account_number,
+                     searchText: search,
+                 }"
+                 v-tooltip-overflow
+@@ -209,7 +225,8 @@
+     import { useAppStore } from '@/atom/app/app.stores'
+     import BaseViewDetail from '@/components/BaseViewDetail.vue'
+     import { getMenuTabs } from '@/helpers/permission'
+-    import { CREATED_LAST_MODIFIED_COLUMN } from '@/data/constants'
++    import { CONTENT_TYPE, CREATED_LAST_MODIFIED_COLUMN } from '@/data/constants'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const router = useRouter()
+@@ -257,9 +274,26 @@
+         },
+     ]
+ 
++    const routeGroup = computed(() => {
++        return (route.name as string).split('.')[0]
++    })
++
+     const isPaymentUnpostingRecordsRouteGroup = computed(() => {
+         return routeGroup.value === 'payment-unposting-records'
+     })
++    const isPendingByMeTab = computed(() => routeGroup.value === 'payment-pending-by-me')
++    const isBatchActionEnabled = computed(() => isPendingByMeTab.value || isPaymentUnpostingRecordsRouteGroup.value)
++    const { clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } = useTransactionBatchApproval(
++        {
++            contentType: CONTENT_TYPE.ACCOUNT_PAYMENT,
++            isEnabled: isPendingByMeTab,
++            checkedIds,
++            resetKey: routeGroup,
++            reload: () => {
++                tableKey.value++
++            },
++        }
++    )
+ 
+     const activeTab = computed(() => {
+         return tabItems[route.meta.value as number]
+@@ -300,10 +334,6 @@
+         isViewDetailDialogOpen.value = !isViewDetailDialogOpen.value
+     }
+ 
+-    const routeGroup = computed(() => {
+-        return (route.name as string).split('.')[0]
+-    })
+-
+     const viewDetailData = computed(() => ({
+         header: {
+             details: [
+diff --git a/src/modules/account-receivable/views/transaction/invoice/index.vue b/src/modules/account-receivable/views/transaction/invoice/index.vue
+index a891373f9d..b1569070db 100644
+--- a/src/modules/account-receivable/views/transaction/invoice/index.vue
++++ b/src/modules/account-receivable/views/transaction/invoice/index.vue
+@@ -11,12 +11,28 @@
+         :exportable="true"
+         :title="$route.meta.title"
+         :linked-model="$consts.CONTENT_TYPE.ACCOUNT_ACCOUNT_RECEIVABLE"
+-        :batch-action="isPaymentUnpostingRecordsRouteGroup"
++        :batch-action="isBatchActionEnabled"
++        :query-params="exclusionQueryParams"
+         @view="onView"
+         @result-items="handleResultItems"
+     >
+-        <template v-if="isPaymentUnpostingRecordsRouteGroup" #app-bar-action>
+-            <v-btn color="primary" class="ml-2" :loading="isPosting" :disabled="!checkedIds.length" @click="post">
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++            <v-btn
++                v-if="isPaymentUnpostingRecordsRouteGroup"
++                color="primary"
++                class="ml-2"
++                :loading="isPosting"
++                :disabled="!checkedIds.length"
++                @click="post"
++            >
+                 <span>Post</span>
+             </v-btn>
+         </template>
+@@ -178,7 +194,8 @@
+     import { accountReceivableSaleInvoiceService } from '@@/account-receivable/services/account-receivable-sale-invoice.service'
+     import BaseCtaButton from '@/components/Buttons/BaseCtaButton.vue'
+     import { getMenuTabs } from '@/helpers/permission'
+-    import { CREATED_LAST_MODIFIED_COLUMN } from '@/data/constants'
++    import { CONTENT_TYPE, CREATED_LAST_MODIFIED_COLUMN } from '@/data/constants'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const appStore = useAppStore()
+@@ -345,6 +362,24 @@
+         }
+         return routeGroup.value === 'invoice-unposting-records'
+     })
++    const isPendingByMeTab = computed(() => {
++        if ((route.name as string).includes('sale-invoice')) {
++            return routeGroup.value === 'sale-invoice-pending-by-me'
++        }
++        return routeGroup.value === 'invoice-pending-by-me'
++    })
++    const isBatchActionEnabled = computed(() => isPendingByMeTab.value || isPaymentUnpostingRecordsRouteGroup.value)
++    const { clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } = useTransactionBatchApproval(
++        {
++            contentType: CONTENT_TYPE.ACCOUNT_ACCOUNT_RECEIVABLE,
++            isEnabled: isPendingByMeTab,
++            checkedIds,
++            resetKey: routeGroup,
++            reload: () => {
++                tableKey.value++
++            },
++        }
++    )
+     watch(
+         items,
+         newItems => {
+diff --git a/src/modules/account-receivable/views/transaction/payment/index.vue b/src/modules/account-receivable/views/transaction/payment/index.vue
+index daa00b7bfe..7288c30c9b 100644
+--- a/src/modules/account-receivable/views/transaction/payment/index.vue
++++ b/src/modules/account-receivable/views/transaction/payment/index.vue
+@@ -11,12 +11,28 @@
+         :exportable="true"
+         :title="$route.meta.title"
+         :linked-model="$consts.CONTENT_TYPE.ACCOUNT_RECEIVABLE_PAYMENT"
+-        :batch-action="isPaymentUnpostingRecordsRouteGroup"
++        :batch-action="isBatchActionEnabled"
++        :query-params="exclusionQueryParams"
+         @view="onView"
+         @result-items="handleResultItems"
+     >
+-        <template v-if="isPaymentUnpostingRecordsRouteGroup" #app-bar-action>
+-            <v-btn color="primary" class="ml-2" :loading="isPosting" :disabled="!checkedIds.length" @click="post">
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++            <v-btn
++                v-if="isPaymentUnpostingRecordsRouteGroup"
++                color="primary"
++                class="ml-2"
++                :loading="isPosting"
++                :disabled="!checkedIds.length"
++                @click="post"
++            >
+                 <span>Post</span>
+             </v-btn>
+         </template>
+@@ -158,7 +174,8 @@
+     import { useAppStore } from '@/atom/app/app.stores'
+     import BaseViewDetail from '@/components/BaseViewDetail.vue'
+     import { getMenuTabs } from '@/helpers/permission'
+-    import { CREATED_LAST_MODIFIED_COLUMN } from '@/data/constants'
++    import { CONTENT_TYPE, CREATED_LAST_MODIFIED_COLUMN } from '@/data/constants'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const router = useRouter()
+@@ -255,6 +272,19 @@
+     const isPaymentUnpostingRecordsRouteGroup = computed(() => {
+         return routeGroup.value === 'account-receivable-payment-unposting-records'
+     })
++    const isPendingByMeTab = computed(() => routeGroup.value === 'account-receivable-payment-pending-by-me')
++    const isBatchActionEnabled = computed(() => isPendingByMeTab.value || isPaymentUnpostingRecordsRouteGroup.value)
++    const { clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } = useTransactionBatchApproval(
++        {
++            contentType: CONTENT_TYPE.ACCOUNT_RECEIVABLE_PAYMENT,
++            isEnabled: isPendingByMeTab,
++            checkedIds,
++            resetKey: routeGroup,
++            reload: () => {
++                tableKey.value++
++            },
++        }
++    )
+     watch(
+         items,
+         newItems => {
+diff --git a/src/modules/inventory/views/transaction/adjustment/index.vue b/src/modules/inventory/views/transaction/adjustment/index.vue
+index 58b83093e1..55ccf25d86 100644
+--- a/src/modules/inventory/views/transaction/adjustment/index.vue
++++ b/src/modules/inventory/views/transaction/adjustment/index.vue
+@@ -2,19 +2,33 @@
+     <base-table
+         ref="inventoryAdjustmentTable"
+         :key="formKey"
++        v-model:checkedIds="checkedIds"
+         name="inventoryAdjustment-table"
+         title="Adjustment"
+         :headers="activeTab.headers"
+         :action-items="[{ type: 'edit' }, { type: 'post' }, { type: 'revoke' }, { type: 'delete' }]"
+         :action="action"
+         :api-service="ApiService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
+         :get-service-key="activeTab?.getServiceKey"
++        :query-params="exclusionQueryParams"
+         :route-group="activeTab?.routeGroup"
+         :link-tabs="children"
+         :linked-model="CONTENT_TYPE.INVENTORY_ADJUSTMENT"
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`hr_employee.full_name`]="{ item, search }">
+             <base-avatar-info
+                 :key="item.hr_employee.id"
+@@ -150,6 +164,7 @@
+     import { getMenuTabs } from '@/helpers/permission'
+     import { actionPermission } from '@@/inventory/helpers'
+     import State from '@@/inventory/components/transaction/State.vue'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+     /* STATES */
+     const ApiService = new InventoryAdjustment()
+     const actionOnState = new InventoryState()
+@@ -158,7 +173,9 @@
+     const appStore = useAppStore()
+     const route = useRoute()
+     const router = useRouter()
+-    const activeTab = storeAdjustment.tabItems[route.meta.value]
++    const activeTabIndex = computed(() => Number(route.meta.value ?? 0))
++    const activeTab = computed(() => storeAdjustment.tabItems[activeTabIndex.value])
++    const isPendingByMeTab = computed(() => activeTabIndex.value === 1)
+     const children = getMenuTabs(URL_PATH.INVENTORY, [URL_PATH.TRANSACTIONS, URL_PATH.ADJUSTMENT])
+     // method
+     const onView = async data => {
+@@ -270,6 +287,12 @@
+     const onReloadTable = () => {
+         inventoryAdjustmentTable.value?.reload()
+     }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.INVENTORY_ADJUSTMENT,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     const adjustmentAction = actionPermission(URL_PATH.ADJUSTMENT)
+     const { canPost, canRevoke } = adjustmentAction
+diff --git a/src/modules/inventory/views/transaction/issue/index.vue b/src/modules/inventory/views/transaction/issue/index.vue
+index 52245c1cd4..e808b4f101 100644
+--- a/src/modules/inventory/views/transaction/issue/index.vue
++++ b/src/modules/inventory/views/transaction/issue/index.vue
+@@ -1,19 +1,33 @@
+ <template>
+     <base-table
+         ref="inventoryIssueTable"
++        v-model:checkedIds="checkedIds"
+         name="inventoryIssue-table"
+         title="Issue"
+         :headers="activeTab?.headers"
+         :action-items="[{ type: 'edit' }, { type: 'post' }, { type: 'revoke' }, { type: 'delete' }]"
+         :action="action"
+         :api-service="ApiService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
+         :get-service-key="activeTab?.getServiceKey"
++        :query-params="exclusionQueryParams"
+         :route-group="activeTab?.routeGroup"
+         :link-tabs="children"
+         :linked-model="CONTENT_TYPE.INVENTORY_ISSUE"
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`hr_employee.full_name`]="{ item, search }">
+             <ApprovalAvatar
+                 v-if="item?.hr_employee?.id"
+@@ -148,6 +162,7 @@
+     import { getMenuTabs } from '@/helpers/permission'
+     import { actionPermission } from '@@/inventory/helpers'
+     import State from '@@/inventory/components/transaction/State.vue'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     /* STATES */
+ 
+@@ -160,7 +175,9 @@
+     const router = useRouter()
+ 
+     const children = getMenuTabs(URL_PATH.INVENTORY, [URL_PATH.TRANSACTIONS, URL_PATH.ISSUES])
+-    const activeTab = IssueStore.tabItems[route.meta.value]
++    const activeTabIndex = computed(() => Number(route.meta.value ?? 0))
++    const activeTab = computed(() => IssueStore.tabItems[activeTabIndex.value])
++    const isPendingByMeTab = computed(() => activeTabIndex.value === 1)
+ 
+     // method
+     const onView = async data => {
+@@ -291,6 +308,12 @@
+     const onReloadTable = () => {
+         inventoryIssueTable.value?.reload()
+     }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.INVENTORY_ISSUE,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     const issueAction = actionPermission(URL_PATH.ISSUES)
+     const { canPost, canRevoke } = issueAction
+diff --git a/src/modules/inventory/views/transaction/production/index.vue b/src/modules/inventory/views/transaction/production/index.vue
+index f699d06fe4..0601bcdcb6 100644
+--- a/src/modules/inventory/views/transaction/production/index.vue
++++ b/src/modules/inventory/views/transaction/production/index.vue
+@@ -2,17 +2,31 @@
+     <base-table
+         ref="inventoryProduction"
+         :key="formKey"
++        v-model:checkedIds="checkedIds"
+         name="inventoryPRODUCTION-table"
+         title="Production"
+         :headers="activeTab?.headers"
+         :action-items="[{ type: 'edit' }, { type: 'post' }, { type: 'revoke' }, { type: 'delete' }]"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
+         :get-service-key="activeTab?.getServiceKey"
++        :query-params="exclusionQueryParams"
+         :route-group="activeTab?.routeGroup"
+         :linked-model="CONTENT_TYPE.INVENTORY_PRODUCTION"
+         :link-tabs="children"
+         :api-service="ApiService"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`item.name`]="{ item: record }">
+             <ItemDisplay width="200" :item="record.item" title="reference_no" subtitle="name" />
+         </template>
+@@ -94,7 +108,7 @@
+ </template>
+ 
+ <script lang="ts" setup>
+-    import { ref } from 'vue'
++    import { computed, ref } from 'vue'
+     import { useRoute } from 'vue-router'
+     import { useAppStore } from '@/atom/app/app.stores'
+     import { InventoryProduction, InventoryState } from '@@/inventory/services/transaction.service'
+@@ -109,6 +123,7 @@
+     import { actionPermission } from '@@/inventory/helpers'
+     import State from '@@/inventory/components/transaction/State.vue'
+     import ItemDisplay from '@/components/ItemDisplay.vue'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const appStore = useAppStore()
+     const store = useInventoryProduction()
+@@ -117,7 +132,19 @@
+     const ApiService = new InventoryProduction()
+     const route = useRoute()
+     const formKey = ref(0)
+-    const activeTab = store.tabItems[route.meta.value]
++    const activeTabIndex = computed(() => Number(route.meta.value ?? 0))
++    const activeTab = computed(() => store.tabItems[activeTabIndex.value])
++    const isPendingByMeTab = computed(() => activeTabIndex.value === 1)
++    const inventoryProduction = ref()
++    const onReloadTable = () => {
++        inventoryProduction.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.INVENTORY_PRODUCTION,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     const accessRight = computed(() => {
+         if (typeof appStore.modelAccessRight == 'string') {
+diff --git a/src/modules/inventory/views/transaction/receipt/index.vue b/src/modules/inventory/views/transaction/receipt/index.vue
+index 551a26863d..06d3802231 100644
+--- a/src/modules/inventory/views/transaction/receipt/index.vue
++++ b/src/modules/inventory/views/transaction/receipt/index.vue
+@@ -1,18 +1,32 @@
+ <template>
+     <base-table
+         ref="inventoryReceiptTable"
++        v-model:checkedIds="checkedIds"
+         name="inventoryReceipt-table"
+         title="Receipt"
+         :headers="activeTab?.headers"
+         :action-items="[{ type: 'edit' }, { type: 'post' }, { type: 'revoke' }, { type: 'delete' }]"
+         :api-service="ApiService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
+         :get-service-key="activeTab?.getServiceKey"
++        :query-params="exclusionQueryParams"
+         :route-group="activeTab?.routeGroup"
+         :link-tabs="children"
+         :linked-model="CONTENT_TYPE.INVENTORY_RECEIPT"
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`hr_employee.full_name`]="{ item, search }">
+             <ApprovalAvatar
+                 v-if="item?.hr_employee?.id"
+@@ -136,7 +150,6 @@
+     import { useInventoryTransaction, useInventoryTransactionReceipt } from '@@/inventory/store/transaction.store'
+     import { useAppStore } from '@/atom/app/app.stores'
+     import { useRoute, useRouter } from 'vue-router'
+-    import { mapper } from '@/utils/map'
+     import { useCustomToast } from '@/composables/useCustomToast'
+     import { POSITION, TYPE } from 'vue-toastification'
+     import i18n from '@/plugins/i18n'
+@@ -147,6 +160,7 @@
+     import { getMenuTabs } from '@/helpers/permission'
+     import { actionPermission } from '@@/inventory/helpers'
+     import State from '@@/inventory/components/transaction/State.vue'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+     /* STATES */
+ 
+     const ApiService = new InventoryReceipt()
+@@ -157,6 +171,19 @@
+     const route = useRoute()
+     const router = useRouter()
+     const children = getMenuTabs(URL_PATH.INVENTORY, [URL_PATH.TRANSACTIONS, URL_PATH.RECEIPT])
++    const activeTabIndex = computed(() => Number(route.meta.value ?? 0))
++    const activeTab = computed(() => storeReceipt.tabItems[activeTabIndex.value])
++    const isPendingByMeTab = computed(() => activeTabIndex.value === 1)
++    const inventoryReceiptTable = ref()
++    const onReloadTable = () => {
++        inventoryReceiptTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.INVENTORY_RECEIPT,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     // method
+     const onView = async data => {
+@@ -257,7 +284,6 @@
+         }
+     }
+ 
+-    const activeTab = storeReceipt.tabItems[route.meta.value]
+     const accessRight = computed(() => {
+         if (typeof appStore.modelAccessRight == 'string') {
+             return {
+@@ -275,11 +301,6 @@
+         return !disabledStatuses.includes(item.status) || !(accessRight.value?.update || accessRight.value?.delete)
+     }
+ 
+-    const inventoryReceiptTable = ref()
+-    const onReloadTable = () => {
+-        inventoryReceiptTable.value?.reload()
+-    }
+-
+     const receiptAction = actionPermission(URL_PATH.RECEIPT)
+     const { canPost, canRevoke } = receiptAction
+     const shouldHideActionPermissionButton = item => {
+diff --git a/src/modules/inventory/views/transaction/transfer/index.vue b/src/modules/inventory/views/transaction/transfer/index.vue
+index 3c01dc4ed0..678952abee 100644
+--- a/src/modules/inventory/views/transaction/transfer/index.vue
++++ b/src/modules/inventory/views/transaction/transfer/index.vue
+@@ -1,18 +1,32 @@
+ <template>
+     <base-table
+         ref="inventoryTransferTable"
++        v-model:checkedIds="checkedIds"
+         name="inventoryTransfer-table"
+         title="Transfer"
+         :headers="activeTab?.headers"
+         :action-items="[{ type: 'edit' }, { type: 'post' }, { type: 'revoke' }, { type: 'delete' }]"
+         :api-service="ApiService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
+         :get-service-key="activeTab?.getServiceKey"
++        :query-params="exclusionQueryParams"
+         :route-group="activeTab?.routeGroup"
+         :link-tabs="children"
+         :linked-model="CONTENT_TYPE.INVENTORY_TRANSFER"
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`pending_approval_by`]="{ item: tableItem, search }">
+             <PendingAvatar :item="tableItem" :search="search" />
+         </template>
+@@ -158,6 +172,7 @@
+     import { getMenuTabs } from '@/helpers/permission'
+     import { actionPermission } from '@@/inventory/helpers'
+     import State from '@@/inventory/components/transaction/State.vue'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+     /* STATES */
+     const ApiService = new InventoryTransfer()
+     const actionOnState = new InventoryState()
+@@ -167,7 +182,9 @@
+     const route = useRoute()
+     const router = useRouter()
+     const children = getMenuTabs(URL_PATH.INVENTORY, [URL_PATH.TRANSACTIONS, URL_PATH.TRANSFER])
+-    const activeTab = storeTransfer.tabItems[route.meta.value]
++    const activeTabIndex = computed(() => Number(route.meta.value ?? 0))
++    const activeTab = computed(() => storeTransfer.tabItems[activeTabIndex.value])
++    const isPendingByMeTab = computed(() => activeTabIndex.value === 1)
+ 
+     // method
+     const onView = async data => {
+@@ -292,6 +309,12 @@
+     const onReloadTable = () => {
+         inventoryTransferTable.value?.reload()
+     }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.INVENTORY_TRANSFER,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     onUnmounted(() => store.toDefault())
+ </script>
+diff --git a/src/modules/inventory/views/transaction/transfer_request/index.vue b/src/modules/inventory/views/transaction/transfer_request/index.vue
+index 608ae4af93..46a0810595 100644
+--- a/src/modules/inventory/views/transaction/transfer_request/index.vue
++++ b/src/modules/inventory/views/transaction/transfer_request/index.vue
+@@ -1,18 +1,32 @@
+ <template>
+     <base-table
+         ref="inventoryTransferReqTable"
++        v-model:checkedIds="checkedIds"
+         name="inventoryTransferReq-table"
+         title="Transfer Request"
+         :headers="activeTab?.headers"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }, { type: 'close' }, { type: 'revoke' }]"
+         :api-service="ApiService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
+         :get-service-key="activeTab?.getServiceKey"
++        :query-params="exclusionQueryParams"
+         :route-group="activeTab?.routeGroup"
+         :link-tabs="children"
+         :linked-model="CONTENT_TYPE.INVENTORY_TRANSFER_REQUEST"
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`hr_employee.full_name`]="{ item, search }">
+             <base-avatar-info
+                 :key="item.hr_employee.id"
+@@ -213,6 +227,7 @@
+     import { getMenuTabs } from '@/helpers/permission'
+     import { actionPermission } from '@@/inventory/helpers'
+     import State from '@@/inventory/components/transaction/State.vue'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+     /* STATES */
+ 
+     const store = useInventoryTransaction()
+@@ -271,7 +286,9 @@
+         },
+     }))
+ 
+-    const activeTab = storeTransferReq.tabItems[route.meta.value]
++    const activeTabIndex = computed(() => Number(route.meta.value ?? 0))
++    const activeTab = computed(() => storeTransferReq.tabItems[activeTabIndex.value])
++    const isPendingByMeTab = computed(() => activeTabIndex.value === 1)
+     const accessRight = computed(() => {
+         if (typeof appStore.modelAccessRight == 'string') {
+             return {
+@@ -383,6 +400,12 @@
+     const onReloadTable = () => {
+         inventoryTransferReqTable.value?.reload()
+     }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.INVENTORY_TRANSFER_REQUEST,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     const switchTitle = computed(() => {
+         if (storeTransferReq.isPurchase) {
+diff --git a/src/modules/purchase/views/transaction/purchase-order/index.vue b/src/modules/purchase/views/transaction/purchase-order/index.vue
+index 2bd9019eef..a485ab9497 100644
+--- a/src/modules/purchase/views/transaction/purchase-order/index.vue
++++ b/src/modules/purchase/views/transaction/purchase-order/index.vue
+@@ -1,5 +1,7 @@
+ <template>
+     <base-table
++        ref="purchaseOrderTable"
++        v-model:checkedIds="checkedIds"
+         :name="$route.name"
+         :headers="activeTab.headers"
+         :route-group="activeTab.routeGroup"
+@@ -7,11 +9,24 @@
+         :link-tabs="activeChildren"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }]"
+         :api-service="activeService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
++        :query-params="exclusionQueryParams"
+         :title="$route.meta.title"
+         :linked-model="CONTENT_TYPE.INVENTORY_PURCHASE_ORDER"
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #reference_no="{ item, search }">
+             <router-link
+                 v-if="item.id"
+@@ -256,6 +271,7 @@
+     import ViewSummary from '@@/purchase/components/ViewSummary.vue'
+     import PurchaseOrderViewSummaryContent from '@@/purchase/views/transaction/purchase-order/components/PurchaseOrderViewSummaryContent.vue'
+     import { getMenuTabs, hasPermissionAction } from '@/helpers/permission'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const router = useRouter()
+@@ -293,6 +309,17 @@
+     const activeTab = computed(() => {
+         return tabItems[route.meta.value as number]
+     })
++    const isPendingByMeTab = computed(() => Number(route.meta.value ?? 0) === 1)
++    const purchaseOrderTable = ref()
++    const onReloadTable = () => {
++        purchaseOrderTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.INVENTORY_PURCHASE_ORDER,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     const activeChildren = computed(() => {
+         return children
+diff --git a/src/modules/purchase/views/transaction/purchase-receipt/index.vue b/src/modules/purchase/views/transaction/purchase-receipt/index.vue
+index a17d9ee01b..70610cede4 100644
+--- a/src/modules/purchase/views/transaction/purchase-receipt/index.vue
++++ b/src/modules/purchase/views/transaction/purchase-receipt/index.vue
+@@ -1,5 +1,7 @@
+ <template>
+     <base-table
++        ref="purchaseReceiptTable"
++        v-model:checkedIds="checkedIds"
+         :name="$route.name"
+         :headers="activeTab.headers"
+         :route-group="activeTab.routeGroup"
+@@ -7,11 +9,24 @@
+         :link-tabs="children"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }]"
+         :api-service="purchaseReceiptService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
++        :query-params="exclusionQueryParams"
+         :title="$route.meta.title"
+         :linked-model="CONTENT_TYPE.INVENTORY_PURCHASE_RECEIPT"
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #reference_no="{ item, search }">
+             <router-link
+                 v-if="item.id"
+@@ -134,6 +149,7 @@
+     import PurchaseReceiptViewSummaryContent from '@@/purchase/views/transaction/purchase-receipt/components/PurchaseReceiptViewSummaryContent.vue'
+     import type { PurchaseReceiptReadResponse } from '@@/purchase/types/purchase-receipt.type'
+     import { getMenuTabs } from '@/helpers/permission'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const router = useRouter()
+@@ -169,6 +185,17 @@
+     const activeTab = computed(() => {
+         return tabItems[route.meta.value as number]
+     })
++    const isPendingByMeTab = computed(() => Number(route.meta.value ?? 0) === 1)
++    const purchaseReceiptTable = ref()
++    const onReloadTable = () => {
++        purchaseReceiptTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.INVENTORY_PURCHASE_RECEIPT,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     function onView(currentItem: PurchaseReceiptReadResponse) {
+         currentItemId.value = currentItem.id
+diff --git a/src/modules/purchase/views/transaction/purchase-request/index.vue b/src/modules/purchase/views/transaction/purchase-request/index.vue
+index 95a0f7e605..aa5cad38ab 100644
+--- a/src/modules/purchase/views/transaction/purchase-request/index.vue
++++ b/src/modules/purchase/views/transaction/purchase-request/index.vue
+@@ -27,6 +27,7 @@
+     import ViewSummary from '@@/purchase/components/ViewSummary.vue'
+     import PurchaseRequestViewSummaryContent from '@@/purchase/views/transaction/purchase-request/components/PurchaseRequestViewSummaryContent.vue'
+     import { hasPermissionAction } from '@/helpers/permission'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const router = useRouter()
+@@ -74,6 +75,17 @@
+     const children = getMenuTabs(MODULE_PATH, CHILDREN_PATHS)
+ 
+     const activeTab = computed(() => tabItems.value[route.meta.value as number])
++    const isPendingByMeTab = computed(() => Number(route.meta.value ?? 0) === 1)
++    const purchaseRequestTable = ref()
++    const onReloadTable = () => {
++        purchaseRequestTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.PURCHASE_REQUEST,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     const toggleConvertDialog = async () => {
+         isConvertDialogOpen.value = !isConvertDialogOpen.value
+@@ -190,18 +202,32 @@
+ <template>
+     <base-table
+         ref="purchaseRequestTable"
++        v-model:checkedIds="checkedIds"
+         :name="$route.name"
+         :title="$route.meta.title"
+         :headers="activeTab?.headers"
+         :route-group="activeTab?.routeGroup"
+         :link-tabs="children"
+         :api-service="purchaseRequestService"
++        :batch-action="isPendingByMeTab"
+         :get-service-key="activeTab.getServiceKey"
++        :query-params="exclusionQueryParams"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }]"
+         :linked-model="CONTENT_TYPE.PURCHASE_REQUEST"
+         exportable
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #tableActions>
+             <div class="d-flex align-center">
+                 <v-checkbox
+diff --git a/src/modules/purchase/views/transaction/sourcing-vendor/index.vue b/src/modules/purchase/views/transaction/sourcing-vendor/index.vue
+index aa236adac0..35bacdfa93 100644
+--- a/src/modules/purchase/views/transaction/sourcing-vendor/index.vue
++++ b/src/modules/purchase/views/transaction/sourcing-vendor/index.vue
+@@ -9,10 +9,11 @@
+     import { mapper } from '@/utils/map'
+     import { CONTENT_TYPE as PURCHASE_CONTENT_TYPE, CONTENT_TYPE } from '@@/purchase/data/constants'
+     import { CREATED_LAST_MODIFIED_COLUMN } from '@/data/constants'
+-    import { ref } from 'vue'
++    import { computed, ref } from 'vue'
+     import type { ISourcingVendorDetailResponse } from '@@/purchase/types/sourcing-vendor'
+     import ViewSummary from '@@/purchase/components/ViewSummary.vue'
+     import SourcingVendorViewSummaryContent from '@@/purchase/views/transaction/sourcing-vendor/components/SourcingVendorViewSummaryContent.vue'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const defaultHeaders = ref(SOURCING_VENDOR_HEADERS)
+     const myRecordAndPendingByMeHeaders = ref(MY_RECORD_AND_PENDING_BY_ME_HEADERS)
+@@ -68,23 +69,48 @@
+     const activeTab = computed(() => {
+         return tabItems.value[route.meta.value as number]
+     })
++    const isPendingByMeTab = computed(() => Number(route.meta.value ?? 0) === 1)
++    const sourcingVendorTable = ref()
++    const onReloadTable = () => {
++        sourcingVendorTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.SOURCING_VENDOR,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ </script>
+ 
+ <template>
+     <base-table
+         ref="sourcingVendorTable"
++        v-model:checkedIds="checkedIds"
+         :name="$route.name"
+         :title="$route.meta.title"
+         :headers="activeTab?.headers"
+         :route-group="activeTab?.routeGroup"
+         :link-tabs="children"
+         :api-service="sourcingService"
++        :batch-action="isPendingByMeTab"
+         :get-service-key="activeTab.getServiceKey"
++        :query-params="exclusionQueryParams"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }]"
+         :linked-model="CONTENT_TYPE.SOURCING_VENDOR"
+         exportable
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #reference_no="{ item, search }">
+             <router-link
+                 v-if="item.id"
+diff --git a/src/modules/requests/views/finance/employee-advance/index.vue b/src/modules/requests/views/finance/employee-advance/index.vue
+index 83b8ad2cd9..6fcc1c22c5 100644
+--- a/src/modules/requests/views/finance/employee-advance/index.vue
++++ b/src/modules/requests/views/finance/employee-advance/index.vue
+@@ -1,15 +1,30 @@
+ <template>
+     <base-table
++        ref="employeeAdvanceTable"
++        v-model:checkedIds="checkedIds"
+         :headers="activeTab.headers"
+         :route-group="activeTab.routeGroup"
+         :get-service-key="activeTab.getServiceKey"
+         :link-tabs="children"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }]"
+         :api-service="employeeAdvanceService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
++        :query-params="exclusionQueryParams"
+         :title="$route.meta.title"
+         :linked-model="$consts.CONTENT_TYPE.EMPLOYEE_ADVANCE"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`hr_employee.full_name`]="{ item: tableItem, search }">
+             <base-avatar-info
+                 v-if="tableItem.hr_employee"
+@@ -178,6 +193,8 @@
+     import { getMenuTabs } from '@/helpers/permission'
+     import { TRAVEL_REQUEST_CONTENT_TYPES } from '@@/travel-request/constants/travel-request.constant'
+     import PendingAvatar from '@/components/PendingAvatar.vue'
++    import { CONTENT_TYPE } from '@/data/constants'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const headers = ref(defaultHeaders)
+@@ -209,6 +226,17 @@
+     const activeTab = computed(() => {
+         return tabItems[route.meta.value as number]
+     })
++    const isPendingByMeTab = computed(() => Number(route.meta.value ?? 0) === 1)
++    const employeeAdvanceTable = ref()
++    const onReloadTable = () => {
++        employeeAdvanceTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.EMPLOYEE_ADVANCE,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ </script>
+ 
+ <style scoped>
+diff --git a/src/modules/requests/views/finance/employee-settlement/index.vue b/src/modules/requests/views/finance/employee-settlement/index.vue
+index 58e685f9f2..195c030f44 100644
+--- a/src/modules/requests/views/finance/employee-settlement/index.vue
++++ b/src/modules/requests/views/finance/employee-settlement/index.vue
+@@ -1,15 +1,30 @@
+ <template>
+     <base-table
++        ref="employeeSettlementTable"
++        v-model:checkedIds="checkedIds"
+         :headers="activeTab.headers"
+         :route-group="activeTab.routeGroup"
+         :get-service-key="activeTab.getServiceKey"
+         :link-tabs="children"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }]"
+         :api-service="employeeSettlementService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
++        :query-params="exclusionQueryParams"
+         :title="$route.meta.title"
+         :linked-model="$consts.CONTENT_TYPE.EMPLOYEE_SETTLEMENT"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`hr_employee.full_name`]="{ item: tableItem, search }">
+             <base-avatar-info
+                 v-if="tableItem.hr_employee"
+@@ -147,6 +162,8 @@
+     import { getMenuTabs } from '@/helpers/permission'
+     import { TRAVEL_REQUEST_CONTENT_TYPES } from '@@/travel-request/constants/travel-request.constant'
+     import PendingAvatar from '@/components/PendingAvatar.vue'
++    import { CONTENT_TYPE } from '@/data/constants'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const headers = ref(defaultHeaders)
+@@ -178,6 +195,17 @@
+     const activeTab = computed(() => {
+         return tabItems[route.meta.value as number]
+     })
++    const isPendingByMeTab = computed(() => Number(route.meta.value ?? 0) === 1)
++    const employeeSettlementTable = ref()
++    const onReloadTable = () => {
++        employeeSettlementTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.EMPLOYEE_SETTLEMENT,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ </script>
+ 
+ <style scoped>
+diff --git a/src/modules/requests/views/finance/expense-receipt/index.vue b/src/modules/requests/views/finance/expense-receipt/index.vue
+index 8e9b988398..c8b86ff886 100644
+--- a/src/modules/requests/views/finance/expense-receipt/index.vue
++++ b/src/modules/requests/views/finance/expense-receipt/index.vue
+@@ -1,15 +1,30 @@
+ <template>
+     <base-table
++        ref="expenseReceiptTable"
++        v-model:checkedIds="checkedIds"
+         :headers="activeTab.headers"
+         :route-group="activeTab.routeGroup"
+         :get-service-key="activeTab.getServiceKey"
+         :link-tabs="children"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }]"
+         :api-service="expenseReceiptService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
++        :query-params="exclusionQueryParams"
+         :title="$route.meta.title"
+         :linked-model="$consts.CONTENT_TYPE.EMPLOYEE_EXPENSE"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`hr_employee.full_name`]="{ item: tableItem, search }">
+             <base-avatar-info
+                 v-if="tableItem.hr_employee"
+@@ -169,6 +184,8 @@
+     import { getMenuTabs } from '@/helpers/permission'
+     import { TRAVEL_REQUEST_CONTENT_TYPES } from '@@/travel-request/constants/travel-request.constant'
+     import PendingAvatar from '@/components/PendingAvatar.vue'
++    import { CONTENT_TYPE } from '@/data/constants'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const headers = ref(defaultHeaders)
+@@ -205,6 +222,17 @@
+     const activeTab = computed(() => {
+         return tabItems[route.meta.value as number]
+     })
++    const isPendingByMeTab = computed(() => Number(route.meta.value ?? 0) === 1)
++    const expenseReceiptTable = ref()
++    const onReloadTable = () => {
++        expenseReceiptTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.EMPLOYEE_EXPENSE,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ </script>
+ 
+ <style scoped>
+diff --git a/src/modules/sales/views/transaction/sale-order/index.vue b/src/modules/sales/views/transaction/sale-order/index.vue
+index f7b2ca4037..65ac95d4fe 100644
+--- a/src/modules/sales/views/transaction/sale-order/index.vue
++++ b/src/modules/sales/views/transaction/sale-order/index.vue
+@@ -1,16 +1,31 @@
+ <template>
+     <base-table
++        ref="saleOrderTable"
++        v-model:checkedIds="checkedIds"
+         :headers="activeTab.headers"
+         :route-group="activeTab.routeGroup"
+         :get-service-key="activeTab.getServiceKey"
+         :link-tabs="activeChildren"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }]"
+         :api-service="activeService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
++        :query-params="exclusionQueryParams"
+         :title="$t(activeTab.title)"
+         :linked-model="CONTENT_TYPE.INVENTORY_SALE_ORDER"
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`hr_employee.full_name`]="{ item: tableItem, search }">
+             <base-avatar-info
+                 v-if="tableItem.hr_employee"
+@@ -156,6 +171,7 @@
+     import object from '@/utils/object'
+     import { getMenuTabs } from '@/helpers/permission'
+     import { mapper } from '@/utils/map'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const router = useRouter()
+@@ -195,6 +211,17 @@
+     const activeTab = computed(() => {
+         return tabItems[route.meta.value as number]
+     })
++    const isPendingByMeTab = computed(() => Number(route.meta.value ?? 0) === 1)
++    const saleOrderTable = ref()
++    const onReloadTable = () => {
++        saleOrderTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.INVENTORY_SALE_ORDER,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     const activeChildren = computed(() => {
+         return children
+@@ -261,13 +288,7 @@
+             })
+             useCustomToast(TYPE.SUCCESS, POSITION.TOP_CENTER, '', t('sales.sales_order.message.convert'), 3000)
+         } catch (error) {
+-            useCustomToast(
+-                TYPE.ERROR,
+-                POSITION.TOP_CENTER,
+-                '',
+-                t('http_messages.something_went_wrong'),
+-                3000
+-            )
++            useCustomToast(TYPE.ERROR, POSITION.TOP_CENTER, '', t('http_messages.something_went_wrong'), 3000)
+             console.error(error)
+         }
+     }
+diff --git a/src/modules/sales/views/transaction/sale-shipment/index.vue b/src/modules/sales/views/transaction/sale-shipment/index.vue
+index 7cc5232c4d..42793cede8 100644
+--- a/src/modules/sales/views/transaction/sale-shipment/index.vue
++++ b/src/modules/sales/views/transaction/sale-shipment/index.vue
+@@ -1,16 +1,31 @@
+ <template>
+     <base-table
++        ref="saleShipmentTable"
++        v-model:checkedIds="checkedIds"
+         :headers="activeTab.headers"
+         :route-group="activeTab.routeGroup"
+         :get-service-key="activeTab.getServiceKey"
+         :link-tabs="children"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }]"
+         :api-service="saleShipmentService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
++        :query-params="exclusionQueryParams"
+         :title="$t(activeTab.title)"
+         :linked-model="CONTENT_TYPE.INVENTORY_SALE_SHIPMENT"
+         @view="onView"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`hr_employee.full_name`]="{ item: tableItem, search }">
+             <base-avatar-info
+                 v-if="tableItem.hr_employee"
+@@ -89,6 +104,7 @@
+     import { CONTENT_TYPE } from '@@/sales/data/constants'
+     import { mapper } from '@/utils/map'
+     import { getMenuTabs } from '@/helpers/permission'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const headers = ref(defaultHeaders)
+@@ -132,6 +148,17 @@
+     const activeTab = computed(() => {
+         return tabItems[route.meta.value as number]
+     })
++    const isPendingByMeTab = computed(() => Number(route.meta.value ?? 0) === 1)
++    const saleShipmentTable = ref()
++    const onReloadTable = () => {
++        saleShipmentTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: CONTENT_TYPE.INVENTORY_SALE_SHIPMENT,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     function toggleViewDetailDialog() {
+         isViewDetailDialogOpen.value = !isViewDetailDialogOpen.value
+diff --git a/src/modules/travel-request/views/travel-request/index.vue b/src/modules/travel-request/views/travel-request/index.vue
+index 1edbd1359b..c0e9f5ba21 100644
+--- a/src/modules/travel-request/views/travel-request/index.vue
++++ b/src/modules/travel-request/views/travel-request/index.vue
+@@ -1,18 +1,33 @@
+ <template>
+     <base-table
++        ref="travelRequestTable"
++        v-model:checkedIds="checkedIds"
+         :headers="activeTab.headers"
+         :route-group="activeTab.routeGroup"
+         :get-service-key="activeTab.getServiceKey"
+         :link-tabs="children"
+         :action-items="[{ type: 'edit' }, { type: 'delete' }]"
+         :api-service="travelRequestService"
++        :batch-action="isPendingByMeTab"
+         :exportable="true"
++        :query-params="exclusionQueryParams"
+         :title="$route.meta.title"
+         :linked-model="TRAVEL_REQUEST_CONTENT_TYPES.TRAVEL_REQUEST"
+         :remove-filter-fields="removeFilterFields"
+         @before-apply-filter="beforeApplyFilter"
+         @before-clear-filter="beforeApplyFilter"
+     >
++        <template #app-bar-action>
++            <BatchApprovalAction
++                v-if="isPendingByMeTab"
++                v-model="popConfirm"
++                :selected-count="checkedIds.length"
++                :loading="isApproving"
++                @clear="clearSelection"
++                @confirm="batchApprove"
++            />
++        </template>
++
+         <template #[`hr_employee.full_name`]="{ item: tableItem, search }">
+             <base-avatar-info
+                 v-if="tableItem.hr_employee"
+@@ -144,6 +159,7 @@
+ </template>
+ 
+ <script lang="ts" setup>
++    import { computed, onMounted, ref } from 'vue'
+     import { useRoute } from 'vue-router'
+     import { travelRequestService } from '@@/travel-request/services/travel-request.service'
+     import {
+@@ -155,6 +171,7 @@
+     import { convertToTitleCase } from '@/composables/useStr'
+     import { getMenuTabs } from '@/helpers/permission'
+     import { mapper } from '@/utils/map'
++    import { useTransactionBatchApproval } from '@/composables/useTransactionBatchApproval'
+ 
+     const route = useRoute()
+     const children = getMenuTabs('/travel-request', ['/travel-request/request'])
+@@ -187,6 +204,17 @@
+     const activeTab = computed(() => {
+         return tabItems.value[route.meta.value as number]
+     })
++    const isPendingByMeTab = computed(() => Number(route.meta.value ?? 0) === 1)
++    const travelRequestTable = ref()
++    const onReloadTable = () => {
++        travelRequestTable.value?.reload()
++    }
++    const { checkedIds, clearSelection, exclusionQueryParams, isApproving, popConfirm, batchApprove } =
++        useTransactionBatchApproval({
++            contentType: TRAVEL_REQUEST_CONTENT_TYPES.TRAVEL_REQUEST,
++            isEnabled: isPendingByMeTab,
++            reload: onReloadTable,
++        })
+ 
+     const destinationIndex = computed(() => travelRequestHeaders.value.findIndex(item => item.value === 'destinations'))
+ 
+-- 
+2.50.1.windows.1
+
