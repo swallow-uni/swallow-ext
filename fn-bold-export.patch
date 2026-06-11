@@ -1,0 +1,41 @@
+diff --git forkSrcPrefix/src/modules/reports/components/Aggrid/utils/treeDataExcelExport.ts forkDstPrefix/src/modules/reports/components/Aggrid/utils/treeDataExcelExport.ts
+index e01b2c941f5ee429feb59c16fd7a250781ec9200..d5ea6bfa8d44131d00e8bcd5c2dbef29c08034c4 100644
+--- forkSrcPrefix/src/modules/reports/components/Aggrid/utils/treeDataExcelExport.ts
++++ forkDstPrefix/src/modules/reports/components/Aggrid/utils/treeDataExcelExport.ts
+@@ -11,6 +11,8 @@ interface SplitTreeDataExportParams {
+   sheetName: string
+ }
+ 
++const MAIN_ACCOUNT_TREE_LEVEL = 2
++
+ export function getExportGroupLabel(value: unknown) {
+   return String(value ?? '')
+     .split(IDENTIFIER)[0]
+@@ -150,11 +152,15 @@ function getTreeExportStyleData(node: any) {
+   )
+ }
+ 
+-function isTreeExportBoldRow(node: any) {
++function isTreeExportBoldRow(node: any, pathLength: number) {
+   if (node?.allChildrenCount !== null && node?.uiLevel === 0) {
+     return true
+   }
+ 
++  if (pathLength > MAIN_ACCOUNT_TREE_LEVEL) {
++    return false
++  }
++
+   return Boolean(getTreeExportStyleData(node)?.style)
+ }
+ 
+@@ -247,8 +253,8 @@ export function exportSplitTreeDataToExcel({
+     s: titleStyle,
+   }
+ 
+-  nodes.forEach(({ node }, index) => {
+-    if (isTreeExportBoldRow(node)) {
++  nodes.forEach(({ node, path }, index) => {
++    if (isTreeExportBoldRow(node, path.length)) {
+       applyTreeExportBoldRow(worksheet, index + 1, hierarchyColumnCount)
+     }
+   })
